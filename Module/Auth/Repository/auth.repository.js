@@ -51,7 +51,7 @@ const updateOtpStatus = async (otp_id) =>{
 
 // Get User
 const getUser = async (field) =>{
-  const [[query]] = await conn.query(`select * from tbl_user where user_id=? or concat(country_code, phone) = ?  or email = ? or social_id = ? and is_deleted = 0 and is_active = 1 limit 1`, [field, field, field, field])
+  const [[query]] = await conn.query(`select * from tbl_user where (user_id=? or concat(country_code, phone) = ?  or email = ? or social_id = ?) and (is_deleted = 0 and is_active = 1) limit 1`, [field, field, field, field])
 
   return query
 }

@@ -14,7 +14,7 @@ const generateOtp = async (data) => {
       if (isPhoneExist) return { sucess: false, key: "phoneAlreadyExist" };
     } else {
       const isPhoneExist = await repository.checkPhone(country_code + phone);
-      console.log('are bhai rehne de', isPhoneExist, country_code, phone);
+      console.log("are bhai rehne de", isPhoneExist, country_code, phone);
       if (!isPhoneExist) return { sucess: false, key: "userNotFound" };
     }
     const checkOtp = await repository.checkOtp(country_code, phone, purpose);
@@ -31,7 +31,7 @@ const generateOtp = async (data) => {
 };
 
 // Check Credential
-const checkCredential = async (data) => { 
+const checkCredential = async (data) => {
   try {
     const { email, country_code, phone, social_id } = data;
     let errors = {
@@ -319,14 +319,24 @@ const signIn = async (data) => {
     } else if (data.social_id) {
       user = await repository.getUser(data.social_id);
     }
-    if (!user) return { success: false, code: constant.VALIDATION_ERROR, key: "invalidEmail" };
+    if (!user)
+      return {
+        success: false,
+        code: constant.VALIDATION_ERROR,
+        key: "invalidEmail",
+      };
 
     // is passowrd or social id is correct
     const result =
       user.login_type === "s"
         ? md5(data.password) === user.password
         : data.social_id === user.social_id;
-    if (!result) return { success: false, code: constant.VALIDATION_ERROR, key: "invalidPassword" };
+    if (!result)
+      return {
+        success: false,
+        code: constant.VALIDATION_ERROR,
+        key: "invalidPassword",
+      };
 
     // Generate Token
     const tokenData = {
@@ -354,73 +364,90 @@ const signIn = async (data) => {
     const updateDeviceTokenResult =
       await repository.saveUserDeviceDetails(deviceData);
     if (!updateDeviceTokenResult.success)
+      return {
+        success: false,
+        code: constant.ERROR,
+        key: "deviceDetailsSaveFailed",
+      };
 
-      return { success: false, code: constant.ERROR, key: "deviceDetailsSaveFailed" };
-
-    switch(user.steps){
+    switch (user.steps) {
       case 1:
-      user = {
-      user_id: user.user_id,
-      name: user.name,
-      email: user.email,
-      country_code: user.country_code,
-      phone: user.phone,
-      steps: user.steps,
-      token: token.token,
-    };
-        return { success: true, code: constant.PROFILE_PICTURE_PENDING, key: "profileSetUpPending", user}
+        user = {
+          user_id: user.user_id,
+          name: user.name,
+          email: user.email,
+          country_code: user.country_code,
+          phone: user.phone,
+          steps: user.steps,
+          token: token.token,
+        };
+        return {
+          success: true,
+          code: constant.PROFILE_PICTURE_PENDING,
+          key: "profileSetUpPending",
+          user,
+        };
       case 2:
-              user = {
-      user_id: user.user_id,
-      name: user.name,
-      email: user.email,
-      country_code: user.country_code,
-      phone: user.phone,
-      profile_pic: user.profile_pic,
-      steps: user.steps,
-      token: token.token,
-    };
-        return { success: true, code: constant.ADDRESS_PENDING, key: "addressSetUpPending", user}
+        user = {
+          user_id: user.user_id,
+          name: user.name,
+          email: user.email,
+          country_code: user.country_code,
+          phone: user.phone,
+          profile_pic: user.profile_pic,
+          steps: user.steps,
+          token: token.token,
+        };
+        return {
+          success: true,
+          code: constant.ADDRESS_PENDING,
+          key: "addressSetUpPending",
+          user,
+        };
 
-    case 3:
-    user = {
-      user_id: user.user_id,
-      name: user.name,
-      email: user.email,
-      country_code: user.country_code,
-      phone: user.phone,
-      profile_pic: user.profile_pic,
-      steps: user.steps,
-      token: token.token,
-    };
+      case 3:
+        user = {
+          user_id: user.user_id,
+          name: user.name,
+          email: user.email,
+          country_code: user.country_code,
+          phone: user.phone,
+          profile_pic: user.profile_pic,
+          steps: user.steps,
+          token: token.token,
+        };
 
-    const address = await repository.getAddress(user.user_id);
-    user.address = {
-      address_id: address.address_id,
-      name: address.name,
-      company: address.company,
-      address1: address.address1,
-      address2: address.address2,
-      city: address.city_name,
-      state: address.state_name,
-      country: address.country_name,
-      postal_code: address.postal_code,
-      latitude: address.latitude,
-      longitude: address.longitude,
-    };
+        const address = await repository.getAddress(user.user_id);
+        user.address = {
+          address_id: address.address_id,
+          name: address.name,
+          company: address.company,
+          address1: address.address1,
+          address2: address.address2,
+          city: address.city_name,
+          state: address.state_name,
+          country: address.country_name,
+          postal_code: address.postal_code,
+          latitude: address.latitude,
+          longitude: address.longitude,
+        };
 
-    return { success: true, code: constant.SUCCESS, key: "signInSuccess", user };
-  }
+        return {
+          success: true,
+          code: constant.SUCCESS,
+          key: "signInSuccess",
+          user,
+        };
+    }
   } catch (error) {
     console.log(error);
     return { success: false, code: constant.ERROR, key: "somethingWentWrong" };
   }
 };
 
-// Logout 
-const logout = async (token, user_id) =>{
-  try {    
-
+// Logout
+const logout = async (token, user_id) => {
+  try {
     let user = await repository.getUser(user_id);
     if (!user) return { success: false, key: "userNotFound" };
 
@@ -431,45 +458,56 @@ const logout = async (token, user_id) =>{
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
-  } 
-}
+  }
+};
 
 // Forgot Password
-const forgotPassword = async (email) =>{
+const forgotPassword = async (email) => {
   try {
-    const query = await repository.getUser(email)
-    if(!query) return { success: false, key: "emailNotRegistered" }
-    if(query.login_type !== "s") return { success: false, key: "invalidRequest" }
-    const otp = await generateOtp({ country_code: query.country_code, phone: query.phone, purpose: "f" });
-    console.log(otp)
-    if(!otp) return { success: false, key: otp.key }
+    const query = await repository.getUser(email);
+    if (!query) return { success: false, key: "emailNotRegistered" };
+    if (query.login_type !== "s")
+      return { success: false, key: "invalidRequest" };
+    const otp = await generateOtp({
+      country_code: query.country_code,
+      phone: query.phone,
+      purpose: "f",
+    });
+    console.log(otp);
+    if (!otp) return { success: false, key: otp.key };
 
-    return { success: true, key: otp.key }
+    return { success: true, key: otp.key };
   } catch (error) {
-    console.log(error)
-    return { success: false, key: "somethingWentWrong" }
-  } 
-}
+    console.log(error);
+    return { success: false, key: "somethingWentWrong" };
+  }
+};
 
 // Update Password
-const updatePassword = async (data, loggedInUser) =>{
+const updatePassword = async (data, loggedInUser) => {
   try {
-    const { new_password, confirm_new_password } = data
-    if(new_password !== confirm_new_password) return { success: false, key: "passwordMismatch" }
+    const { current_password, new_password, confirm_password } = data;
+    if (new_password !== confirm_password)
+      return { success: false, key: "passwordMismatch" };
 
-      let user = await repository.getUser(loggedInUser.user_id);
-    if(!user) return { success: false, key: "userNotFound" }
-    if(user.login_type !== "s") return { success: false, key: "invalidRequest" }
+    let user = await repository.getUser(loggedInUser.user_id);
+    if (!user) return { success: false, key: "userNotFound" };
+    if (user.login_type !== "s")
+      return { success: false, key: "invalidRequest" };
+    if (user.password !== md5(current_password))
+      return { success: false, key: "invalidCurrentPassword" };
 
-    const result = await repository.updatePassword(user.user_id, md5(new_password))
-    if(!result.success) return { success: false, key: "passwordChangeFailed" }
-    return { success: true, key: "passwordChangeSuccess" }
+    const result = await repository.updatePassword(
+      user.user_id,
+      md5(new_password),
+    );
+    if (!result.success) return { success: false, key: "passwordChangeFailed" };
+    return { success: true, key: "passwordChangeSuccess" };
   } catch (error) {
-    console.log(error)
-    return { success: false, key: "somethingWentWrong" }
+    console.log(error);
+    return { success: false, key: "somethingWentWrong" };
   }
-}
-
+};
 
 module.exports = {
   generateOtp,
@@ -481,5 +519,5 @@ module.exports = {
   signIn,
   logout,
   forgotPassword,
-  updatePassword
+  updatePassword,
 };

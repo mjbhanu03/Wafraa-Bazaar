@@ -26,10 +26,10 @@ const checkToken = async (req, res, next)=> {
     
     const token = req.headers.token
     const isTokenLoggedOut = await repository.checkToken(token)
+    if (!token) return res.status(401).send({ code: responseCode.ERROR, message: "tokenMissing", data: {} })
 
     const decoded = jwt.verify(token, process.env.JWT_WEB_TOKEN)
     
-    if (!token) return res.status(401).send({ code: responseCode.ERROR, message: "tokenMissing", data: {} })
     if (!decoded) return res.status(401).send({ code: responseCode.ERROR, message: "tokenExpired", data: {} })
     if (!isTokenLoggedOut) return res.status(401).send({ code: responseCode.ERROR, message: "invalidToken", data: {} })
 
