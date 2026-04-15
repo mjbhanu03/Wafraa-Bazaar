@@ -99,6 +99,6 @@ const common = {
       console.log(error);
       return "cardDecryptionFailed";
     }
-  },
+  }
 };
 module.exports = common;

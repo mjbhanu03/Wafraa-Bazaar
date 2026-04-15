@@ -1,19 +1,64 @@
 const conn = require("../../../Config/db");
 const { param } = require("../Routes/user.routes");
 
+// == Check Functions ==
+
+// Check if product exists
+const getProductById  = async (product_id) => {   
+const [[product]] = await conn.query(
+    `select product_id from tbl_product where product_id = ? and is_active = 1 and is_delete = 0`,
+    [product_id],
+  ); 
+return product || null;
+};
+
+// Check variant exists for product
+const getVariantById = async (product_id, variant_id) => {
+  const [[variant]] = await conn.query(
+    `select variant_id, qty, price from tbl_variants where variant_id = ? and product_id = ? and is_active = 1 and is_delete = 0`,
+    [variant_id, product_id],
+  );
+  return variant || null;
+};
+
 // Fetch user details by ID
-const fetchUserById = async (user_id) => {
+const getUserById = async (user_id) => {
   const query = `select user_id, name, email, country_code, phone, profile_pic from tbl_user where user_id = ? and is_active = 1 and is_deleted = 0`;
   const params = [user_id];
 
-  const [user] = await conn.query(query, params);
-  return user[0];
+  const [[user]] = await conn.query(query, params);
+  return user || null;
 };
+
+// Check category exists by ID
+const getCategoryById = async (category_id) => {
+      const [[category]] = await conn.query(
+      `select category_id from tbl_category where parent_id is not null and is_active = 1 and is_delete = 0 order by category_id limit 1`,
+    );
+    return category || null;
+};
+
+// Get cart item by user_id, product_id and variant_id
+const getCartItem = async (user_id, product_id, variant_id) => {
+  const [rows] = await conn.query(
+    `SELECT cart_item_id 
+     FROM tbl_cart_items 
+     WHERE user_id = ? 
+       AND product_id = ? 
+       AND variant_id = ? 
+       AND is_active = 1 
+       AND is_delete = 0 
+     LIMIT 1`,
+    [user_id, product_id, variant_id]
+  );
+  return rows;
+};
+// == Check Functions ==
 
 // fetch banners
 const fetchBanners = async () => {
   const [banners] = await conn.query(
-    `select banner_id, image_url, redirect_type, redirect_id, sort_order from tbl_banner where is_active = 1 order by sort_order`,
+    `select banner_id, image_url, redirect_type, redirect_id, sort_order from tbl_banner where is_active = 1 and is_deleted = 0 order by sort_order`,
   );
 
   return banners;
@@ -25,16 +70,15 @@ const fetchStores = async (data) => {
   const limit = Number(data?.limit) || 10;
   const query = `select s.store_id, s.name, min(sd.image_url), ifnull(avg(sr.rating), 0) as rating, count(sr.rating) as review_count 
         from tbl_store s 
-        left join tbl_store_data sd on s.store_id = sd.store_id and sd.is_active = 1
-        left join tbl_store_rating sr on s.store_id = sr.store_id and sr.is_active = 1
-        where s.is_active = 1 
+        left join tbl_store_data sd on s.store_id = sd.store_id and sd.is_active = 1 and sd.is_deleted = 0
+        left join tbl_store_rating sr on s.store_id = sr.store_id and sr.is_active = 1 and sr.is_delete = 0
+        where s.is_active = 1 and s.is_delete = 0
         group by s.store_id
         limit ?, ?`;
   const params = [(page - 1) * limit, limit];
 
-  console.log(query, params);
   const [stores] = await conn.query(query, params);
-  console.log(stores);
+
   return stores;
 };
 
@@ -64,9 +108,8 @@ const fetchRatingAndReview = async (data) => {
   LIMIT ?, ?`;
   const params = [product_id, (page - 1) * limit, limit];
 
-  //   console.log(query, params);
   const [ratingsAndReviews] = await conn.query(query, params);
-  //   console.log(ratingsAndReviews);
+
   return ratingsAndReviews;
 };
 
@@ -110,10 +153,9 @@ const fetchStoreDetails = async (store_id) => {
   GROUP BY s.store_id`;
   const params = [store_id];
 
-  console.log(query, params);
-  const [stores] = await conn.query(query, params);
-  console.log(stores);
-  return stores[0];
+  const [[stores]] = await conn.query(query, params);
+
+  return stores || null;
 };
 
 // fetch all products of specific store
@@ -162,9 +204,8 @@ const fetchStoreProducts = async (data) => {
   LIMIT ?, ?`;
   const params = [user_id, store_id, (page - 1) * limit, limit];
 
-  console.log(query, params);
   const [storeProducts] = await conn.query(query, params);
-  console.log(storeProducts);
+
   return storeProducts;
 };
 
@@ -180,7 +221,6 @@ const fetchProductDetails = async (data) => {
   p.category_id,
   c.cate_name AS sub_category_name,
   parent_c.cate_name AS category_name,
-  p.title,
   p.description,
   p.additional_info,
   AVG(pr.rating) AS product_rating,
@@ -195,6 +235,7 @@ const fetchProductDetails = async (data) => {
   s.office_name,
   s.street_name,
   s.city_id
+
 FROM tbl_product p
 INNER JOIN tbl_store s
   ON p.store_id = s.store_id
@@ -235,9 +276,8 @@ WHERE p.product_id = ?
 GROUP BY p.product_id`;
   const params = [user_id, product_id];
 
-  // console.log(query, params);
   const [[productDetails]] = await conn.query(query, params);
-  // console.log(productDetails);
+
   return productDetails;
 };
 
@@ -295,9 +335,7 @@ ORDER BY avg_rating DESC, rating_count DESC
 LIMIT ?, ?`;
   const params = [user_id, (page - 1) * limit, limit];
 
-  console.log(query, params);
   const [deals] = await conn.query(query, params);
-  console.log(deals);
   return deals;
 };
 
@@ -372,14 +410,6 @@ const fetchNewArrivals = async (data) => {
   const page = Number(data?.page) || 1;
   const limit = Number(data?.limit) || 3;
 
-  let selectedSubCategoryId = sub_category_id;
-  if (!selectedSubCategoryId) {
-    const [defaultSubCategory] = await conn.query(
-      `select category_id from tbl_category where parent_id is not null and is_active = 1 and is_delete = 0 order by category_id limit 1`,
-    );
-    selectedSubCategoryId = defaultSubCategory?.[0]?.category_id || 0;
-  }
-
   const query = `SELECT
   p.product_id,
   p.title,
@@ -413,11 +443,10 @@ WHERE p.is_active = 1
 GROUP BY p.product_id
 ORDER BY p.created_at DESC
 LIMIT ?, ?`;
-  const params = [user_id, selectedSubCategoryId, (page - 1) * limit, limit];
+  const params = [user_id, sub_category_id, (page - 1) * limit, limit];
 
-  console.log(query, params);
   const [products] = await conn.query(query, params);
-  console.log(products);
+
   return products;
 };
 
@@ -521,9 +550,7 @@ ORDER BY bought_at DESC
 LIMIT ?, ?`;
   const params = [user_id, user_id, (page - 1) * limit, limit];
 
-  console.log(query, params);
   const [products] = await conn.query(query, params);
-  console.log(products);
   return products;
 };
 
@@ -542,7 +569,7 @@ const fetchProductSizes = async (product_id) => {
     `SELECT s.size_id, s.value AS size_value 
     FROM tbl_variants v 
     left join tbl_size s on v.size_id = s.size_id and s.is_active = 1 and s.is_delete = 0
-    WHERE v.product_id = ?
+    WHERE v.product_id = ? and v.is_active = 1 and v.is_delete = 0
     group by s.value`,
     [product_id],
   );
@@ -594,7 +621,7 @@ const fetchProductColors = async (product_id) => {
     `SELECT c.color_id, c.name AS color_value
     FROM tbl_variants v
     LEFT JOIN tbl_color c ON v.color_id = c.color_id AND c.is_active = 1 AND c.is_delete = 0
-    WHERE v.product_id = ?
+    WHERE v.product_id = ? and v.is_active = 1 and v.is_delete = 0 and v.qty > 0
     GROUP BY c.name`,
     [product_id],
   );
@@ -616,38 +643,38 @@ const fetchSuggestedProducts = async (data) => {
     CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist
 
     from tbl_product p
+
     LEFT JOIN tbl_product_data pd
-      ON p.product_id = pd.product_id 
+      ON p.product_id = pd.product_id AND pd.is_active = 1 AND pd.is_delete = 0
+
     LEFT JOIN tbl_discount d
-      ON p.product_id = d.product_id 
+      ON p.product_id = d.product_id AND d.is_active = 1 AND d.is_delete = 0
       AND d.is_active = 1
         AND d.is_delete = 0
         AND (d.start_time IS NULL OR d.start_time <= NOW())
         AND (d.end_time IS NULL OR d.end_time >= NOW()) 
+
     LEFT JOIN tbl_wishlist w
       ON p.product_id = w.product_id 
       AND w.is_active = 1
         AND w.is_delete = 0
+
     WHERE p.is_active = 1
       AND p.is_delete = 0
       AND p.category_id = ?
+
     GROUP BY p.product_id
     ORDER BY p.created_at DESC
     LIMIT 10`;
   const params = [category_id];
 
-  console.log(query, params);
   const [products] = await conn.query(query, params);
-  console.log(products);
-  if (!products.length) return null;
 
-  return products;
+  return products || null;
 };
 
 // Fetch Size Chart
 const fetchSizeChart = async (product_id) => {
-  try {
-    console.log(product_id);
     const [sizeChart] = await conn.query(
       `SELECT 
     s.value AS size_value,
@@ -675,83 +702,38 @@ JOIN tbl_size s
 WHERE p.product_id = ?`,
       [product_id],
     );
-    // console.log(sizeChart);
-    if (!sizeChart.length) return null;
-    console.log("hey", sizeChart);
-    return sizeChart;
-  } catch (error) {
-    console.log(error);
-    return { success: false, key: "somethingWentWrong" };
-  }
+
+    return sizeChart || null;
+
 };
 
-// Create or update cart item
-const createCart = async (data) => {
-  const user_id = Number(data?.user_id) || 0;
-  const product_id = Number(data?.product_id) || 0;
-  const variant_id = Number(data?.variant_id) || 0;
-  const quantity = Number(data?.quantity) || 0;
-
-  const [product] = await conn.query(
-    `select product_id from tbl_product where product_id = ? and is_active = 1 and is_delete = 0`,
-    [product_id],
+// Update cart item
+const updateCartItem = async (cart_item_id, quantity, price) => {
+  await conn.query(
+    `UPDATE tbl_cart_items 
+     SET quantity = ?, price = ? 
+     WHERE cart_item_id = ?`,
+    [quantity, price, cart_item_id]
   );
+};
 
-  if (!product.length) return { success: false, key: "productNotFound" };
-
-  const [variant] = await conn.query(
-    `select variant_id, qty, price from tbl_variants where variant_id = ? and product_id = ? and is_active = 1 and is_delete = 0`,
-    [variant_id, product_id],
+// Insert item into cart
+const insertCartItem = async (user_id, product_id, variant_id, quantity, price) => {
+  const [result] = await conn.query(
+    `INSERT INTO tbl_cart_items 
+     (user_id, product_id, variant_id, quantity, price) 
+     VALUES (?, ?, ?, ?, ?)`,
+    [user_id, product_id, variant_id, quantity, price]
   );
-  if (!variant.length) return { success: false, key: "variantNotFound" };
+  return result.insertId;
+};
 
-  const availableQty = Number(variant[0].qty) || 0;
-  if (quantity > availableQty)
-    return { success: false, key: "insufficientStock" };
-
-  const price = Number(variant[0].price);
-
-  const [cartItem] = await conn.query(
-    `select cart_item_id from tbl_cart_items where user_id = ? and product_id = ? and variant_id = ? and is_active = 1 and is_delete = 0 limit 1`,
-    [user_id, product_id, variant_id],
+// Delete cart item
+const deleteCartItem = async (conn, cart_item_id) => {
+  await conn.query(
+    `DELETE FROM tbl_cart_items WHERE cart_item_id = ?`,
+    [cart_item_id]
   );
-
-  if (cartItem.length) {
-    await conn.query(
-      `update tbl_cart_items set quantity = ?, price = ? where cart_item_id = ?`,
-      [quantity, price, cartItem[0].cart_item_id],
-    );
-    return {
-      success: true,
-      key: "cartUpdated",
-      cart: {
-        user_id,
-        cart_item_id: cartItem[0].cart_item_id,
-        product_id,
-        variant_id,
-        quantity,
-        price,
-      },
-    };
-  }
-
-  const [newCartItem] = await conn.query(
-    `insert into tbl_cart_items (user_id, product_id, variant_id, quantity, price) values (?, ?, ?, ?, ?)`,
-    [user_id, product_id, variant_id, quantity, price],
-  );
-
-  return {
-    success: true,
-    key: "cartCreated",
-    cart: {
-      user_id,
-      cart_item_id: newCartItem.insertId,
-      product_id,
-      variant_id,
-      quantity,
-      price,
-    },
-  };
 };
 
 // Create address
@@ -780,18 +762,14 @@ const createAddress = async (data) => {
   };
   const [address] = await conn.query(`INSERT INTO tbl_address set ?`, [object]);
 
-  return {
-    success: true,
-    key: "addressCreated",
-    address: address.insertId,
-  };
+  return address.insertId || null;
 };
 
 // Fetch address
 const fetchAddress = async (data) => {
   const { address_id, user_id, page = 1, limit = 10 } = data;
 
-  const [[addresses]] = await conn.query(
+  const [[address]] = await conn.query(
     `SELECT
       a.address_id,
       a.user_id,
@@ -827,7 +805,7 @@ const fetchAddress = async (data) => {
     [user_id, address_id, (page - 1) * limit, limit],
   );
 
-  return addresses;
+  return address || null;
 };
 
 // Fetch addresses
@@ -853,61 +831,41 @@ const fetchAddresses = async (data) => {
       a.longitude,
       a.is_default
     FROM tbl_address a
+
     LEFT JOIN tbl_city c
       ON a.city_id = c.city_id
       AND c.is_active = 1
       AND c.is_deleted = 0
+
     LEFT JOIN tbl_state st
     ON c.state_id = st.state_id
     AND st.is_active=1
+    AND st.is_deleted=0
+
     LEFT JOIN tbl_country cnt
     ON st.country_id = cnt.country_id
     AND cnt.is_active=1
+    AND cnt.is_deleted=0
+
     WHERE a.user_id = ?
       AND a.is_active = 1
       AND a.is_deleted = 0
+
       LIMIT ?, ?`,
     [user_id, (page - 1) * limit, limit],
   );
   // console.log(addresses);
-  return addresses;
+  return addresses || null;
 };
 
 // Update address
-const updateAddress = async (data) => {
-  const {
-    address_id,
-    user_id,
-    name,
-    company,
-    address1,
-    address2,
-    city_id,
-    postal_code,
-    latitude,
-    longitude,
-  } = data;
-  const object = {};
-  name && (object.name = name);
-  company && (object.company = company);
-  address1 && (object.address1 = address1);
-  address2 && (object.address2 = address2);
-  city_id && (object.city_id = city_id);
-  postal_code && (object.postal_code = postal_code);
-  latitude && (object.latitude = latitude);
-  longitude && (object.longitude = longitude);
-
-  if (!Object.keys(object).length) {
-    return { success: false, key: "invalidAddressData" };
-  }
-
+const updateAddress = async (data, address_id, user_id) => {
   const [result] = await conn.query(
     `UPDATE tbl_address SET ? WHERE address_id = ? AND user_id = ? AND is_active = 1 AND is_deleted = 0`,
-    [object, address_id, user_id],
+    [data, address_id, user_id],
   );
-  if (!result.affectedRows) return { success: false, key: "addressNotFound" };
 
-  return { success: true, key: "addressUpdated" };
+  return result.changedRows;
 };
 
 // Delete address
@@ -921,8 +879,7 @@ const deleteAddress = async (data) => {
      WHERE address_id = ? AND user_id = ? AND is_active = 1 AND is_deleted = 0`,
     [address_id, user_id],
   );
-  if (!result.affectedRows) return { success: false, key: "addressNotFound" };
-  return { success: true, key: "addressDeleted" };
+  return result.changedRows || 0;
 };
 
 // Create card
@@ -947,15 +904,10 @@ const createCard = async (data) => {
     exp_at,
   };
 
-  const [card] = await conn.query(`INSERT INTO tbl_card_details SET ?`, [
-    object,
-  ]);
+  const [card] = await conn.query(`INSERT INTO tbl_card_details SET ?`, [object]);
 
-  return {
-    success: true,
-    key: "cardCreated",
-    card_detail_id: card.insertId,
-  };
+  return  card.insertId
+
 };
 
 // Fetch card
@@ -980,7 +932,7 @@ const fetchCard = async (data) => {
   );
 
   // console.log(card, user_id, card_detail_id);
-  return card;
+  return card || null;
 };
 
 // Fetch cards
@@ -1006,7 +958,7 @@ const fetchCards = async (data) => {
     [user_id, (page - 1) * limit, limit],
   );
 
-  return cards;
+  return cards || null;
 };
 
 // Delete card
@@ -1017,10 +969,8 @@ const deleteCard = async (data) => {
     `delete from tbl_card_details where card_detail_id = ? and user_id = ?`,
     [card_detail_id, user_id],
   );
-
-  if (!result.affectedRows) return { success: false, key: "cardNotFound" };
-
-  return { success: true, key: "cardDeleted" };
+  console.log('kem cho', result.affectedRows);
+  return result.affectedRows || 0;
 };
 
 // fetch cart items
@@ -1082,10 +1032,10 @@ const fetchCart = async (data) => {
 // Fetch Discount
 const fetchDiscount = async (discount_id) => {
   const [[discount]] = await conn.query(
-    `SELECT discount_id, product_id, amount_type, amount, max_value FROM tbl_discount WHERE discount_id = ? AND is_active = 1 AND is_delete = 0 AND (start_time IS NULL OR start_time <= NOW()) AND (end_time IS NULL OR end_time >= NOW())`,
+    `SELECT discount_id, product_id, discount_name,amount_type, amount, max_value FROM tbl_discount WHERE discount_id = ? AND is_active = 1 AND is_delete = 0 AND (start_time IS NULL OR start_time <= NOW()) AND (end_time IS NULL OR end_time >= NOW())`,
     [discount_id],
   );
-  return discount;
+  return discount || null;
 };
 
 // Fetch Variant
@@ -1098,7 +1048,7 @@ const fetchVariant = async (variant_id) => {
     WHERE v.variant_id = ? AND v.is_active = 1 AND v.is_delete = 0`,
     [variant_id],
   );
-  return variant;
+  return variant || null;
 };
 
 // Fetch Tax
@@ -1108,117 +1058,76 @@ const fetchTax = async (tax_id) => {
     [tax_id],
   );
 
-  return tax;
+  return tax || null;
 };
 
 // Place order from cart
-const placeOrderFromCart = async (data) => {
-  try {
-    console.log("yes you are here", data);
-    const object = {
-      user_id: Number(data?.user_id) || 0,
-      name: data?.name || "",
-      company: data?.company || "",
-      address1: data?.address1 || "",
-      address2: data?.address2 || "",
-      city: data.city_name,
-      state: data.state_name,
-      country: data.country_name,
-      postal_code: data.postal_code,
-      latitude: data.latitude,
-      longitude: data.longitude,
-      tax_name: data.tax_name ? data.tax_name : null,
-      tax_value: data.tax_value ? data.tax_value : null,
-      discount_name: data.discount_name ? data.discount_name : null,
-      discount_value: data.discount_value ? data.discount_value : null,
-      payment_type: data.payment_type,
-      card_name: data.card_name ? data.card_name : null,
-      card_holder_name: data.card_holder_name ? data.card_holder_name : null,
-      card_type: data.card_type ? data.card_type : null,
-      total_price: data.total_price,
-    };
 
-    const [orderResult] = await conn.query(`INSERT INTO tbl_order set ?`, [
-      object,
-    ]);
-
-    const order_id = orderResult.insertId;
-
-    // Insert order tracking
-    await conn.query(
-      `INSERT INTO tbl_order_tracking (order_id, order_status) VALUES (?, ?)`,
-      [order_id, "pending"],
-    );
-
-    // Insert order items
-    for (const item of data.cartItems) {
-      await conn.query(
-        `INSERT INTO tbl_order_items
-        (order_id, product_id, variant_id, title, image_url, quantity, price, size, color, sub_category_name, category_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          order_id,
-          item.product_id,
-          item.variant_id,
-          item.title,
-          item.image_url,
-          item.quantity,
-          item.price,
-          item.size,
-          item.color,
-          item.sub_category_name,
-          item.category_name,
-        ],
-      );
-
-      // Update stock
-      const [stockUpdate] = await conn.query(
-        `UPDATE tbl_variants
-         SET qty = qty - ?
-         WHERE variant_id = ?
-           AND qty >= ?
-           AND is_active = 1
-           AND is_delete = 0`,
-        [item.quantity, item.variant_id, item.quantity],
-      );
-
-      if (!stockUpdate.affectedRows) {
-        return { success: false, key: "insufficientStock" };
-      }
-    }
-
-    // Empty cart
-    const cartItemIds = data.cartItems.map((item) => item.cart_item_id);
-    await conn.query(
-      `UPDATE tbl_cart_items
-       SET is_active = 0,
-           is_delete = 1
-       WHERE user_id = ?
-         AND cart_item_id IN (?)`,
-      [data.user_id, cartItemIds],
-    );
-
-    // Place notification
-    await placeNotification({
-      user_id: data.user_id,
-      message: `Your order with order id ${order_id} has been placed successfully.`,
-      order_id,
-    });
-    return {
-      success: true,
-      key: "orderPlaced",
-      order: {
-        order_id,
-        total_price: data.total_price,
-        order_status: "pending",
-        item_count: data.cartItems.length,
-      },
-    };
-  } catch (error) {
-    console.log(error);
-    return { success: false, key: "somethingWentWrong" };
-  }
+const insertOrder = async (object) => {
+  const [result] = await conn.query(
+    `INSERT INTO tbl_order SET ?`,
+    [object]
+  );
+  return result.insertId;
 };
+
+const insertOrderItems = async (items) => {
+  const values = items.map((item) => [
+    item.order_id,
+    item.product_id,
+    item.variant_id,
+    item.title,
+    item.image_url,
+    item.quantity,
+    item.price,
+    item.size,
+    item.color,
+    item.sub_category_name,
+    item.category_name,
+  ]);
+
+  await conn.query(
+    `INSERT INTO tbl_order_items
+     (order_id, product_id, variant_id, title, image_url, quantity, price, size, color, sub_category_name, category_name)
+     VALUES ?`,
+    [values]
+  );
+};
+
+const insertOrderTracking = async (order_id) => {
+  await conn.query(
+    `INSERT INTO tbl_order_tracking (order_id, order_status) VALUES (?, 'pending')`,
+    [order_id],
+  );
+}
+
+const updateVariantStock = async (item) => {
+  const [result] = await conn.query(
+    `UPDATE tbl_variants
+     SET qty = qty - ?
+     WHERE variant_id = ?
+       AND qty >= ?
+       AND is_active = 1
+       AND is_delete = 0`,
+    [item.quantity, item.variant_id, item.quantity]
+  );
+
+  return result.affectedRows;
+};
+
+const clearCart = async (data) => {
+  const { user_id, cartItemIds } = data;
+  await conn.query(
+    `UPDATE tbl_cart_items
+     SET is_active = 0,
+         is_delete = 1
+     WHERE user_id = ?
+       AND cart_item_id IN (?)`,
+    [user_id, cartItemIds]
+  );
+};
+
+// Order placed done 
 
 // Place Notification
 const placeNotification = async (data) => {
@@ -1252,10 +1161,7 @@ const updateProfile = async (data) => {
     [object, user_id],
   );
 
-  if (!result.affectedRows) return { success: false, key: "userNotFound" };
-
-  const user = await fetchUserById(user_id);
-  return { success: true, key: "profileUpdated", user };
+  return result.affectedRows;
 };
 
 // Fetch wishlist
@@ -1303,7 +1209,6 @@ const fetchWishlist = async (data) => {
     LIMIT ?, ?`,
     [user_id, (page - 1) * limit, limit],
   );
-  console.log(wishlist);
   return wishlist;
 };
 
@@ -1338,7 +1243,7 @@ const markNotificationsRead = async (data) => {
   const user_id = Number(data?.user_id) || 0;
   // const notificationIds = data?.notification_ids || [];
 
-  await conn.query(
+  const [result] = await conn.query(
     `UPDATE tbl_notification
      SET is_read = 1
      WHERE user_id = ?
@@ -1348,7 +1253,7 @@ const markNotificationsRead = async (data) => {
     [user_id],
   );
 
-  return { success: true, key: "notificationRead" };
+  return result.affectedRows;
 };
 
 // Delete notification
@@ -1364,11 +1269,7 @@ const deleteNotification = async (data) => {
        AND is_delete = 0`,
     [notification_id, user_id],
   );
-
-  if (!result.affectedRows)
-    return { success: false, key: "notificationNotFound" };
-
-  return { success: true, key: "notificationDeleted" };
+  return result.affectedRows;
 };
 
 // Fetch blogs
@@ -1390,7 +1291,7 @@ const fetchBlogs = async (data) => {
     [(page - 1) * limit, limit],
   );
 
-  return blogs;
+  return blogs || null;
 };
 
 // Fetch blog by id
@@ -1409,7 +1310,7 @@ const fetchBlogById = async (blog_id) => {
     [blog_id],
   );
 
-  return blog;
+  return blog || null;
 };
 
 // Fetch CMS page
@@ -1427,7 +1328,7 @@ const fetchCmsByTitle = async (title) => {
     [title],
   );
 
-  return cms;
+  return cms || null;
 };
 
 // Fetch FAQs
@@ -1443,7 +1344,7 @@ const fetchFaqs = async () => {
     ORDER BY faq_id ASC`,
   );
 
-  return faqs;
+  return faqs || null;
 };
 
 // Fetch chat messages
@@ -1501,7 +1402,7 @@ const fetchReturnReasons = async () => {
     ORDER BY return_reason_id ASC`,
   );
 
-  return reasons;
+  return reasons || null;
 };
 
 // Fetch order item for rating
@@ -1545,7 +1446,7 @@ const fetchOrderItemForRating = async (data) => {
     [order_item_id, user_id],
   );
 
-  return orderItem;
+  return orderItem || null;
 };
 
 // Fetch product 
@@ -1566,7 +1467,7 @@ const fetchRatingById = async (rating_id) => {
     [rating_id],
   );
 
-  return rating;
+  return rating || null;
 };
 
 
@@ -1583,11 +1484,7 @@ const createProductRating = async (data) => {
     object,
   ]);
 
-  return {
-    success: true,
-    key: "ratingCreated",
-    product_rating_id: rating.insertId,
-  };
+  return rating.insertId
 };
 
 // Place return order
@@ -1645,7 +1542,7 @@ const fetchReturnOrderByItem = async (order_item_id) => {
     [order_item_id],
   );
 
-  return returnOrder;
+  return returnOrder || null;
 };
 
 // Fetch notification by id
@@ -1667,36 +1564,15 @@ const fetchNotificationById = async (notification_id, user_id) => {
     [notification_id, user_id],
   );
 
-  return notification;
+  return notification || null;
 };
 
 // Fetch CMS pages by keyword helper aliases
 const fetchCmsAboutUs = async () => fetchCmsByTitle("About Us");
 const fetchCmsPrivacyPolicy = async () => fetchCmsByTitle("Privacy Policy");
 const fetchCmsTerms = async () => fetchCmsByTitle("Terms & Conditions");
-const fetchCmsReturnRefundPolicy = async () =>
-  fetchCmsByTitle("Refund & Return Policy");
-const fetchContactUs = async (data) => {
-  const object = {
-    contact_type: data.contact_type,
-    title: data.title,
-    email: data.email,
-    description: data.description,
-    country_code: data.country_code,
-    phone: data.phone,
-    status: "pending",
-  };
+const fetchCmsReturnRefundPolicy = async () => fetchCmsByTitle("Refund & Return Policy");
 
-  const [contact] = await conn.query(`INSERT INTO tbl_contact_us SET ?`, [
-    object,
-  ]);
-
-  return {
-    success: true,
-    key: "contactUsCreated",
-    contact_id: contact.insertId,
-  };
-};
 
 // insert search history
 const insertSearchHistory = async (data) => {
@@ -1724,7 +1600,7 @@ const fetchProductSearchResult = async (data) => {
     page = 1,
     limit = 10,
   } = data;
-
+  // console.log('here to reach')
   const whereConditions = [];
   const havingConditions = [];
   const params = [user_id];
@@ -1795,7 +1671,9 @@ const fetchProductSearchResult = async (data) => {
     whereConditions.push(`p.title LIKE ?`);
     params.push(`%${query}%`);
   }
-  sql += ` WHERE ${whereConditions.join(" AND ")}`;
+  if (whereConditions.length) {
+    sql += ` WHERE ${whereConditions.join(" AND ")}`;
+  }
   sql += ` GROUP BY p.product_id`;
 
   if (minPrice !== undefined && minPrice !== null && minPrice !== "") {
@@ -1832,8 +1710,9 @@ const fetchProductSearchResult = async (data) => {
 
   sql += ` LIMIT ?, ?`;
   params.push((page - 1) * limit, limit);
-  console.log(sql, params);
+  // console.log(sql, params);
   const [products] = await conn.query(sql, params);
+  // console.log(products);
   return products;
 };
 
@@ -1905,54 +1784,52 @@ const fetchOrderHistory = async (data) => {
   const page = Number(data?.page) || 1;
   const limit = Number(data?.limit) || 10;
   const tab = String(data?.tab || "current").toLowerCase();
-
-  let statusFilter =
-    "ots.order_status NOT IN ('cancelled', 'delivered', 'returned')";
-
-  if (tab === "delivered") {
-    statusFilter = "ots.order_status = 'delivered'";
-  }
-
-  const [orders] = await conn.query(
-    `SELECT
+  let query = `SELECT
       o.order_id,
-      o.created_at,
       o.total_price,
       o.payment_type,
-      ots.order_status,
+      o.tax_name,
+      o.tax_value,
+      o.discount_name,
+      o.discount_type,
+      o.discount_value,
+      o.name as addressee_name,
+      o.company as address_company,
+      o.address1,
+      o.address2,
+      o.postal_code,
+      o.latitude,
+      o.longitude,
+      o.city,
+      o.state,
+      o.country,
       o.card_name,
       o.card_number,
-      NULL AS expiry
+      o.card_type,
+      o.card_holder_name,
+      ots.order_status AS current_status,
+      o.created_at
     FROM tbl_order o
-    LEFT JOIN (
-      SELECT t1.order_id, t1.order_status
-      FROM tbl_order_tracking t1
-      INNER JOIN (
-        SELECT order_id, MAX(created_at) AS latest_created_at
-        FROM tbl_order_tracking
-        WHERE is_active = 1
-          AND is_deleted = 0
-        GROUP BY order_id
-      ) t2
-        ON t1.order_id = t2.order_id
-       AND t1.created_at = t2.latest_created_at
-      WHERE t1.is_active = 1
-        AND t1.is_deleted = 0
-    ) ots
+    LEFT JOIN tbl_order_tracking ots
       ON o.order_id = ots.order_id
-
+      AND ots.is_active = 1 AND ots.is_deleted = 0 AND ots.created_at = (
+      SELECT MAX(created_at) FROM tbl_order_tracking WHERE order_id = o.order_id AND is_active = 1 AND is_deleted = 0)
     WHERE o.user_id = ?
       AND o.is_active = 1
-      AND o.is_delete = 0
-      AND ${statusFilter}
-    ORDER BY o.created_at DESC
-    LIMIT ?, ?`,
+      AND o.is_delete = 0`
+    tab === "delivered" && (query += ` AND ots.order_status = 'delivered' `)
+    tab === "current" && (query += ` AND ots.order_status != 'delivered' `)
+    query += ` ORDER BY o.created_at DESC LIMIT ?, ?`;
+
+  const [orders] = await conn.query(
+    query,
     [user_id, (page - 1) * limit, limit],
   );
 
   if (!orders.length) return [];
 
   const orderIds = orders.map((order) => order.order_id);
+
   const [items] = await conn.query(
     `SELECT order_id, image_url, title AS product_name
      FROM tbl_order_items
@@ -1960,11 +1837,12 @@ const fetchOrderHistory = async (data) => {
        AND is_active = 1
        AND is_delete = 0`,
     [orderIds],
-  );
+  );  
 
   const itemMap = items.reduce((acc, item) => {
     if (!acc[item.order_id]) acc[item.order_id] = [];
     acc[item.order_id].push(item);
+    console.log(acc)
     return acc;
   }, {});
 
@@ -2093,8 +1971,29 @@ const fetchOrderTimeline = async (data) => {
 // Fetch order tracking by order id
 const fetchOrderTrackingByOrderId = async (data) => fetchOrderTimeline(data);
 
+// Count unread notifications
+const countNotifications = async (user_id) => {
+  const [[{ count }]] = await conn.query(
+    `SELECT COUNT(*) AS count FROM tbl_notification WHERE user_id = ? AND is_read = 0 AND is_active = 1 AND is_delete = 0`,
+    [user_id],
+  );
+  return count || 0;
+}
+// Count cart items
+const countCart = async (user_id) => {
+  const [[{ count }]] = await conn.query(
+    `SELECT COUNT(*) AS count FROM tbl_cart_items WHERE user_id = ? AND is_active = 1 AND is_delete = 0`,
+    [user_id],
+  );
+  return count || 0;
+}
+
 module.exports = {
-  fetchUserById,
+  getProductById ,
+  getVariantById ,                  
+  getUserById,
+  getCategoryById,
+  getCartItem,
   fetchBanners,
   fetchStores,
   fetchRatingAndReview,
@@ -2114,7 +2013,9 @@ module.exports = {
   fetchProductColors,
   fetchSuggestedProducts,
   fetchSizeChart,
-  createCart,
+  insertCartItem,
+  updateCartItem,
+  deleteCartItem,
   createAddress,
   createCard,
   fetchAddress,
@@ -2125,7 +2026,14 @@ module.exports = {
   deleteAddress,
   deleteCard,
   fetchCart,
-  placeOrderFromCart,
+
+  insertOrder,
+  insertOrderItems,
+  updateVariantStock,
+  clearCart,
+
+  insertOrderTracking,
+  placeNotification,
   updateProfile,
   fetchWishlist,
   fetchNotifications,
@@ -2145,7 +2053,6 @@ module.exports = {
   placeReturnOrder,
   fetchReturnOrderByItem,
   fetchNotificationById,
-  fetchContactUs,
   fetchOrderTrackingByOrderId,
   insertSearchHistory,
   fetchProductSearchResult,
@@ -2158,4 +2065,6 @@ module.exports = {
   fetchTax,
   fetchDiscount,
   fetchRatingById,
+  countNotifications,
+  countCart
 };

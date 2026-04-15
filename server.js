@@ -12,15 +12,14 @@ env.config();
 app.use(express.text());
 app.use(express.json());
 
-app.use(checkAPIKey)
-app.use(checkToken)
+app.use(checkAPIKey);
+app.use(checkToken);
 
 app.use("/auth/v1", auth);
 app.use("/user/v1", user);
 
-
 try {
-  app.listen(process.env.PORT)
+  app.listen(process.env.PORT);
 } catch (error) {
   console.log(error);
 }

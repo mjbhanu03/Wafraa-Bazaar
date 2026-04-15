@@ -4,7 +4,7 @@ const common = require("../../../Common/common");
 // Fetch Home data
 const fetchHome = async (user_id) => {
   try {
-    const user = await repository.fetchUserById(user_id);
+    const user = await repository.getUserById(user_id);
     const banners = await repository.fetchBanners();
     const stores = await repository.fetchStores();
     const topDeals = await repository.fetchTopDeals({ user_id });
@@ -15,6 +15,9 @@ const fetchHome = async (user_id) => {
     const recentlyBoughtProducts = await repository.fetchRecentlyBought({
       user_id,
     });
+    const notifications =  await repository.countNotifications( user_id );
+    const cart = await repository.countCart( user_id );
+    // console.log(cart, notifications);
     return {
       success: true,
       key: "homeDataFound",
@@ -28,6 +31,8 @@ const fetchHome = async (user_id) => {
         newArrivals,
         bestSellingProducts,
         recentlyBoughtProducts,
+        notifications,
+        cart,
       },
     };
   } catch (error) {
@@ -54,27 +59,27 @@ const fetchCategory = async () => {
 const fetchProductDetails = async (data) => {
   try {
     const productDetails = await repository.fetchProductDetails(data);
+    if (!productDetails)
+      return { success: false, key: "noProductDetailsFound" };
     const productData = await repository.fetchProductData(data.product_id);
     const productSizes = await repository.fetchProductSizes(data.product_id);
     const productColors = await repository.fetchProductColors(data.product_id);
     const suggestedProducts = await repository.fetchSuggestedProducts(
-      productDetails[0].category_id,
+      productDetails.category_id,
     );
     // console.log(productDetails[0].category_id);
 
-    if (!productDetails.length)
-      return { success: false, key: "noProductDetailsFound" };
 
     // const firstRow = productDetails[0];
-    productDetails[0].product_data = productData;
-    productDetails[0].product_sizes = productSizes;
-    productDetails[0].product_colors = productColors;
-    productDetails[0].suggested_products = suggestedProducts;
+    productDetails.product_data = productData;
+    productDetails.product_sizes = productSizes;
+    productDetails.product_colors = productColors;
+    productDetails.suggested_products = suggestedProducts;
 
     return {
       success: true,
       key: "productDetailsFound",
-      productDetails: productDetails[0],
+      productDetails: productDetails,
     };
   } catch (error) {
     console.log(error);
@@ -98,12 +103,11 @@ const fetchBanners = async () => {
 const fetchStores = async (data) => {
   try {
     const stores = await repository.fetchStores(data);
-    console.log(stores);
 
     // if no stores found
     // if(stores.) return { success: false, key: "noStoresFound" }
 
-    if (!stores) return { success: false, key: "noStoresFound" };
+    if (!stores.length) return { success: false, key: "noStoresFound" };
 
     return { success: true, key: "storesFound", stores };
   } catch (error) {
@@ -188,6 +192,11 @@ const fetchTrendingNow = async (data) => {
 // Fetch new arrivals
 const fetchNewArrivals = async (data) => {
   try {
+    if(data.category_id){
+      const category = await repository.getCategoryById(data.category_id);
+      if(!category) return { success: false, key: "categoryNotFound" };
+    }
+
     const newArrivals = await repository.fetchNewArrivals(data);
 
     if (!newArrivals.length)
@@ -298,10 +307,91 @@ const fetchAvailableProductTypes = async (product_id) => {
 // Create Cart
 const createCart = async (data) => {
   try {
-    const cart = await repository.createCart(data);
+    const user_id = Number(data?.user_id) || 0;
+    const product_id = Number(data?.product_id) || 0;
+    const variant_id = Number(data?.variant_id) || 0;
+    const quantity = Number(data?.quantity) || 0;
 
-    if (!cart.success) return { success: false, key: cart.key };
-    return { success: true, key: cart.key, cart: cart.cart };
+    const productExists = await repository.getProductById(product_id);
+    if (!productExists) {
+      return { success: false, key: "productNotFound" };
+    }
+
+    const variantExists = await repository.getVariantById(product_id, variant_id);
+    if (!variantExists) {
+      return { success: false, key: "variantNotFound" };
+    }
+
+    if (quantity > variantExists.qty) {
+      return { success: false, key: "insufficientStock" };
+    }
+
+    const price = Number(variantExists.price);
+
+    const cartItem = await repository.getCartItem(
+      user_id,
+      product_id,
+      variant_id
+    );
+    if (quantity === 0) {
+      if (cartItem.length) {
+        await repository.deleteCartItem(
+          cartItem[0].cart_item_id
+        );
+
+        return {
+          success: true,
+          key: "cartItemDeleted",
+        };
+      }
+
+      return {
+        success: false,
+        key: "cartItemNotFound",
+      };
+    }
+
+    if (cartItem.length) {
+      await repository.updateCartItem(
+        cartItem[0].cart_item_id,
+        quantity,
+        price
+      );
+
+      return {
+        success: true,
+        key: "cartUpdated",
+        cart: {
+          user_id,
+          cart_item_id: cartItem[0].cart_item_id,
+          product_id,
+          variant_id,
+          quantity,
+          price,
+        },
+      };
+    }
+
+    const insertId = await repository.insertCartItem(
+      user_id,
+      product_id,
+      variant_id,
+      quantity,
+      price
+    );
+
+    return {
+      success: true,
+      key: "cartCreated",
+      cart: {
+        user_id,
+        cart_item_id: insertId,
+        product_id,
+        variant_id,
+        quantity,
+        price,
+      },
+    };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -313,14 +403,13 @@ const createAddress = async (data) => {
   try {
     const address = await repository.createAddress(data);
 
-    if (!address.success) return { success: false, key: address.key };
-
+    if (!address) return { success: false, key: "addressCreationFailed" };
     const addressData = await repository.fetchAddress({
-      address_id: address.address,
+      address_id: address,
       user_id: data.user_id,
     });
 
-    return { success: true, key: address.key, address: addressData };
+    return { success: true, key: "addressCreated", address: addressData };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -353,10 +442,10 @@ const createCard = async (data) => {
       card_number: encryptedCardNumber,
     });
 
-    if (!card.success) return { success: false, key: card.key };
+    if (!card) return { success: false, key: "cardCreationFailed" };
 
     const cardData = await repository.fetchCard({
-      card_detail_id: card.card_detail_id,
+      card_detail_id: card,
       user_id: data.user_id,
     });
 
@@ -364,7 +453,7 @@ const createCard = async (data) => {
 
     cardData.card_number = common.decrypt_card(cardData.card_number);
 
-    return { success: true, key: card.key, card: cardData };
+    return { success: true, key: "cardCreated", card: cardData };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -384,12 +473,28 @@ const fetchCards = async (data) => {
         card_number: await common.decrypt_card(card.card_number),
       })),
     );
-    console.log(cards.card);
     return { success: true, key: "cardFound", card: cardList };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
   }
+};
+
+// Delete Card
+const deleteCard = async (data) => {
+      try {
+        const isCardExist = await repository.fetchCard(data);
+        if (!isCardExist) return { success: false, key: "cardNotFound" };
+    
+        const card = await repository.deleteCard(data);
+    
+        if (!card) return { success: false, key: "cardDeletionFailed" };
+    
+        return { success: true, key: "cardDeleted" };
+      } catch (error) {
+        console.log(error);
+        return { success: false, key: "somethingWentWrong" };
+      }
 };
 
 // Update address
@@ -402,21 +507,29 @@ const updateAddress = async (data) => {
     });
     if (!is_addressExist) return { success: false, key: "addressNotFound" };
 
-    const address = await repository.updateAddress(data);
-    if (!address.success) return { success: false, key: address.key };
+    // const address = await repository.updateAddress(data);
+    // if (!address) return { success: false, key: "addressUpdateFailed" };
+    // const object = {}
 
-    const updatedAddress = await repository.fetchAddress({
-      address_id: data.address_id,
-      user_id: data.user_id,
-    });
+    if(data.name) object.name = data.name;
+    if(data.company) object.company = data.company;
+    if(data.address1) object.address1 = data.address1;
+    if(data.address2) object.address2 = data.address2;
+    if(data.city_id) object.city_id = data.city_id;
+    if(data.postal_code) object.postal_code = data.postal_code;
+    if(data.latitude) object.latitude = data.latitude;
+    if(data.longitude) object.longitude = data.longitude;
+    
+    const updatedAddress = await repository.updateAddress(object, data.address_id, data.user_id);
 
-    return { success: true, key: address.key, address: updatedAddress };
+    return { success: true, key: "addressUpdated", address: updatedAddress };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
   }
 };
 
+// Delete address
 const deleteAddress = async (data) => {
   try {
     // Is address exists
@@ -428,31 +541,16 @@ const deleteAddress = async (data) => {
 
     const address = await repository.deleteAddress(data);
 
-    if (!address.success) return { success: false, key: address.key };
+    if (!address) return { success: false, key: "addressDeletionFailed" };
 
-    return { success: true, key: address.key };
+    return { success: true, key: "addressDeleted" };
+    
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
   }
 };
 
-// Delete Card
-const deleteCard = async (data) => {
-  try {
-    const isCardExist = await repository.fetchCard(data);
-    if (!isCardExist) return { success: false, key: "cardNotFound" };
-
-    const card = await repository.deleteCard(data);
-
-    if (!card.success) return { success: false, key: card.key };
-
-    return { success: true, key: card.key };
-  } catch (error) {
-    console.log(error);
-    return { success: false, key: "somethingWentWrong" };
-  }
-};
 
 // Fetch Cart
 const fetchCart = async (data) => {
@@ -460,7 +558,7 @@ const fetchCart = async (data) => {
     const cart = await repository.fetchCart(data);
 
     if (!cart.length) return { success: false, key: "noCartFound" };
-
+    
     return { success: true, key: "cartFound", cart };
   } catch (error) {
     console.log(error);
@@ -485,12 +583,12 @@ const placeOrderFromCart = async (data) => {
           user_id: data.user_id,
         });
         if (!checkAvailability) {
-          return { success: false, key: checkAvailability.key };
+          return { success: false, key: "productNotFound" };
         }
 
         const variant = await repository.fetchVariant(item.variant_id);
         if (!variant) {
-          return { success: false, key: variant.key };
+          return { success: false, key: "variantNotFound" };
         }
 
         if (variant.qty < item.quantity) {
@@ -533,17 +631,19 @@ const placeOrderFromCart = async (data) => {
 
     // fetch discount details if discount_id is provided
     let discount = null;
+    let discountAmount = 0;
+
     if (data.discount_id) {
       discount = await repository.fetchDiscount(data.discount_id);
       if (!discount) return { success: false, key: "discountNotFound" };
-
+      
       if (discount.amount_type === "percentage") {
         if (discount.max_value) {
-          const discountAmount = (totalAmount * Number(discount.amount)) / 100;
+          discountAmount = (totalAmount * Number(discount.amount)) / 100;
           totalAmount -=
-            discountAmount > Number(discount.max_value)
-              ? Number(discount.max_value)
-              : discountAmount;
+          discountAmount > Number(discount.max_value)
+          ? Number(discount.max_value)
+          : discountAmount;
         } else {
           totalAmount -= (totalAmount * Number(discount.amount)) / 100;
         }
@@ -551,6 +651,7 @@ const placeOrderFromCart = async (data) => {
         totalAmount -= Number(discount.amount);
       }
     }
+
 
     // if payment type is card then fetch card details
     if (data.payment_type !== "COD") {
@@ -560,8 +661,9 @@ const placeOrderFromCart = async (data) => {
       });
       if (!card) return { success: false, key: "cardNotFound" };
     }
+
     // Place order from cart
-    const order = await repository.placeOrderFromCart({
+    const order = await repository.insertOrder({
       user_id: data.user_id,
       name: address.name,
       company: address.company,
@@ -577,17 +679,46 @@ const placeOrderFromCart = async (data) => {
       tax_value: tax ? tax.tax_value : null,
       discount_name: discount ? discount.discount_name : null,
       discount_type: discount ? discount.amount_type : null,
-      discount_value: discount ? discount.discount_value : null,
+      discount_value: discountAmount ? discountAmount : null,
       payment_type: data.payment_type,
       card_name: card ? card.card_name : null,
       card_holder_name: card ? card.card_holder_name : null,
       card_type: card ? card.card_type : null,
-      total_price: totalAmount,
-      cartItems,
+      total_price: totalAmount
     });
+    let order_id = order;
+    // Map Items with order id
+    const itemsWithOrderId = cartItems.map((item) => ({
+  ...item,
+  order_id,
+  }));
 
-    if (!order.success) return { success: false, key: order.key };
-    return { success: true, key: order.key, order: order.order };
+    await repository.insertOrderItems(itemsWithOrderId);
+
+    if(order) await repository.insertOrderTracking(order_id);
+
+    const cartItemIds = cartItems.map((item) => item.cart_item_id);
+
+// Clear cart 
+await repository.clearCart({
+  user_id: data.user_id,
+  cartItemIds,
+});
+
+    for (const item of cartItems) {
+  const updated = await repository.updateVariantStock(item);
+
+  if (!updated) {
+    return { success: false, key: "insufficientStock" };
+  }
+}   
+    await repository.placeNotification({
+      user_id: data.user_id,
+      message: `Your order with order id ${order_id} has been placed successfully.`,
+      order_id,
+    });
+    if (!order) return { success: false, key: "orderPlacementFailed" };
+    return { success: true, key: "orderPlaced", order: order };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -673,13 +804,13 @@ const fetchOrderTimeline = async (data) => {
 // Update profile
 const updateProfile = async (data) => {
   try {
-    const user = await repository.fetchUserById(data.user_id);
-    if (!user) return { success: false, key: "userNotFound" };
 
     const profile = await repository.updateProfile(data);
-    if (!profile.success) return { success: false, key: profile.key };
+    if (!profile) return { success: false, key: "profileUpdateFailed" };
 
-    return { success: true, key: profile.key, user: profile.user };
+    const Updateduser = await repository.getUserById(data.user_id);
+
+    return { success: true, key: "profileUpdated", user: Updateduser };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -734,9 +865,9 @@ const deleteNotification = async (data) => {
     if (!notification) return { success: false, key: "notificationNotFound" };
 
     const result = await repository.deleteNotification(data);
-    if (!result.success) return { success: false, key: result.key };
+    if (!result) return { success: false, key: "notificationDeletionFailed" };
 
-    return { success: true, key: result.key };
+    return { success: true, key: "notificationDeleted" };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -872,9 +1003,9 @@ const addRatingAndReview = async (data) => {
       description: data.description,
     });
 
-    if (!rating.success) return { success: false, key: rating.key };
-    const ratingData = await repository.fetchRatingById(rating.product_rating_id);
-    return { success: true, key: rating.key, rating: ratingData };
+    if (!rating) return { success: false, key: "ratingCreationFailed" };
+    const ratingData = await repository.fetchRatingById(rating);
+    return { success: true, key: "ratingCreated", rating: ratingData };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };

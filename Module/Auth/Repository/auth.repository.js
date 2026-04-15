@@ -4,21 +4,21 @@ const { get } = require('../Routes/auth.routes')
 
 // Check Email
 const checkEmail = async (email) =>{
-  const [[query]] = await conn.query(`select * from tbl_user where email = '${email}' and is_deleted = 0`)
+  const [[query]] = await conn.query(`select * from tbl_user where email = ? and is_deleted = 0`, [email])
 
   return query
 }
 
 // Check Phone
 const checkPhone = async (phone) =>{
-  const [[query]] = await conn.query(`select * from tbl_user where concat(country_code, phone) = '${phone}' and is_deleted = 0`)
+  const [[query]] = await conn.query(`select * from tbl_user where concat(country_code, phone) = ? and is_deleted = 0`, [phone])
 
   return query
 }
 
 // Check Social Id
  const checkSocialId = async (social_id) =>{
-  const [[query]] = await conn.query(`select * from tbl_user where social_id = '${social_id}' and is_deleted = 0`)
+  const [[query]] = await conn.query(`select * from tbl_user where social_id = ? and is_deleted = 0`, [social_id])
  return query
 }
 
