@@ -663,7 +663,7 @@ const placeOrderFromCart = async (data) => {
     }
 
     // Place order from cart
-    const order = await repository.insertOrder({
+    let order = await repository.insertOrder({
       user_id: data.user_id,
       name: address.name,
       company: address.company,
@@ -718,6 +718,8 @@ await repository.clearCart({
       order_id,
     });
     if (!order) return { success: false, key: "orderPlacementFailed" };
+
+    order = repository.fetchOrderDetails({order_id: order_id, user_id: data.user_id})
     return { success: true, key: "orderPlaced", order: order };
   } catch (error) {
     console.log(error);
