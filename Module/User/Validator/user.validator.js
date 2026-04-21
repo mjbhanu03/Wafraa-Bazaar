@@ -1,10 +1,27 @@
 const joi = require("joi");
 
-const createCartSchema = joi.object({
-  product_id: joi.number().integer().required(),
-  variant_id: joi.number().integer().required(),
-  quantity: joi.number().integer().min(1).required(),
-});
+const createCartSchema = joi
+  .object({
+    product_id: joi.number().integer().optional(),
+    variant_id: joi.number().integer().optional(),
+    quantity: joi.number().integer().min(0).optional(),
+    tax_id: joi.number().integer().allow(null).optional(),
+    voucher_id: joi.number().integer().allow(null).optional(),
+    address_id: joi.number().integer().allow(null).optional(),
+    delivery_charge: joi.number().min(0).optional(),
+  })
+  .with("product_id", ["variant_id", "quantity"])
+  .with("variant_id", ["product_id", "quantity"])
+  .with("quantity", ["product_id", "variant_id"])
+  .or(
+    "product_id",
+    "variant_id",
+    "quantity",
+    "tax_id",
+    "voucher_id",
+    "address_id",
+    "delivery_charge",
+  );
 
 const createAddressSchema = joi.object({
   name: joi.string().trim().required(),
@@ -84,40 +101,40 @@ const deleteNotificationSchema = joi.object({
   notification_id: joi.number().integer().required(),
 });
 
-const contactUsSchema = joi.object({
-  contact_type: joi.string().trim().required(),
-  title: joi.string().trim().required(),
-  email: joi.string().email().when("contact_type", {
-    is: "email",
-    then: joi.required(),
-    otherwise: joi.optional(),
-  }),
-  description: joi.string().trim().required(),
-  country_code: joi.string().trim().when("contact_type", {
-    is: "phone",
-    then: joi.required(),
-    otherwise: joi.optional(),
-  }),
-  phone: joi.string().trim().when("contact_type", {
-    is: "phone",
-    then: joi.required(),
-    otherwise: joi.optional(),
-  }),
-}).or("email", "phone");
+const contactUsSchema = joi
+  .object({
+    contact_type: joi.string().trim().required(),
+    title: joi.string().trim().required(),
+    email: joi.string().email().when("contact_type", {
+      is: "email",
+      then: joi.required(),
+      otherwise: joi.optional(),
+    }),
+    description: joi.string().trim().required(),
+    country_code: joi.string().trim().when("contact_type", {
+      is: "phone",
+      then: joi.required(),
+      otherwise: joi.optional(),
+    }),
+    phone: joi.string().trim().when("contact_type", {
+      is: "phone",
+      then: joi.required(),
+      otherwise: joi.optional(),
+    }),
+  })
+  .or("email", "phone");
 
 const placeOrderSchema = joi.object({
   address_id: joi.number().integer().required(),
   tax_id: joi.number().optional(),
   payment_type: joi.string().trim().required(),
-  discount_id: joi.number().integer().optional(),
-  card_detail_id: joi
-    .number()
-    .integer()
-    .when("payment_type", {
-      is: joi.valid("COD").not(),
-      then: joi.required(),
-      otherwise: joi.optional(),
-    }),
+  voucher_id: joi.number().integer().optional(),
+  voucher_code: joi.string().trim().optional(),
+  card_detail_id: joi.number().integer().when("payment_type", {
+    is: "COD",
+    then: joi.optional(),
+    otherwise: joi.required(),
+  }),
 });
 
 const searchSchema = joi.object({

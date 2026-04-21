@@ -157,6 +157,9 @@ router.get("/chat", controller.fetchChat);
 // Return reasons
 router.get("/returnReasons", controller.fetchReturnReasons);
 
+// Fetch Vouchers
+
+
 // Place order from cart
 router.post(
   "/order",

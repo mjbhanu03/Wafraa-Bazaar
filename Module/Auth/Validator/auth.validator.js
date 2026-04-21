@@ -1,4 +1,3 @@
-const { steps } = require("framer-motion");
 const joi = require("joi");
 
 // Generate OTP
@@ -34,12 +33,19 @@ const checkCredentialSchema = joi
   .or("phone", "social_id");
 
 // Validate OTP
-const validateOtpSchema = joi.object({
-  country_code: joi.string().required(),
-  phone: joi.string().required(),
-  otp: joi.string().length(4).required(),
-  purpose: joi.string().valid("s", "f").required(),
-});
+const validateOtpSchema = joi
+  .object({
+    country_code: joi.string().when("phone", {
+      is: joi.exist(),
+      then: joi.required(),
+      otherwise: joi.optional(),
+    }),
+    phone: joi.string().optional(),
+    email: joi.string().optional(),
+    otp: joi.string().length(4).required(),
+    purpose: joi.string().valid("s", "f").required(),
+  })
+  .or("phone", "email");
 
 // Sign Up Schema
 const signUpSchema = joi.object({
@@ -128,11 +134,18 @@ const forgotPasswordSchema = joi.object({
   email: joi.string().email().required(),
 });
 
-const updatePasswordSchema = joi.object({
+const changePasswordSchema = joi.object({
   current_password: joi.string().required(),
   new_password: joi.string().required(),
   confirm_password: joi.string().valid(joi.ref("new_password")).required(),
 });
+
+const updatePasswordSchema = joi.object({
+  email: joi.string().email().required(),
+  new_password: joi.string().required(),
+  confirm_password: joi.string().valid(joi.ref("new_password")).required(),
+});
+
 module.exports = {
   generateOtpSchema,
   checkCredentialSchema,
@@ -142,5 +155,6 @@ module.exports = {
   setAddressSchema,
   signInSchema,
   forgotPasswordSchema,
+  changePasswordSchema,
   updatePasswordSchema,
 };

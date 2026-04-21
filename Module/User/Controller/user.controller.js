@@ -1,6 +1,6 @@
 const service = require("../Service/user.service");
 const validator = require("../Validator/user.validator");
-const constants = require("../../../Common/Constant/constant");
+const {responseCode} = require("../../../Constant/constant");
 const common = require("../../../Common/common");
 const { sendResponse } = require("../../../Common/Middleware/middleware");
 const env = require("dotenv").config();
@@ -11,13 +11,13 @@ const Home = async (req, res) => {
     const response = await service.fetchHome(req.user.user_id);
     // console.log(req.user)
     if (!response.success)
-      sendResponse(req, res, 400, constants.ERROR, { key: response.key }, {});
+      sendResponse(req, res, 400, responseCode.ERROR, { key: response.key }, {});
     else
       sendResponse(
         req,
         res,
         200,
-        constants.SUCCESS,
+        responseCode.SUCCESS,
         { key: "homeDataFound" },
         response.data,
       );
@@ -27,12 +27,13 @@ const Home = async (req, res) => {
       req,
       res,
       400,
-      constants.ERROR,
+      responseCode.ERROR,
       { key: "somethingWentWrong" },
       {},
     );
   }
 };
+
 // Fetch banners
 const fetchBanners = async (req, res) => {
   try {
@@ -43,7 +44,7 @@ const fetchBanners = async (req, res) => {
         req,
         res,
         200,
-        constants.NO_DATA_FOUND,
+        responseCode.NO_DATA_FOUND,
         { key: "noBannersFound" },
         {},
       );
@@ -350,18 +351,18 @@ const fetchProductDetails = async (req, res) => {
         req,
         res,
         200,
-        constants.NO_DATA_FOUND,
+        responseCode.NO_DATA_FOUND,
         { key: "noProductDetailsFound" },
         {},
       );
     else if (!response.success)
-      sendResponse(req, res, 400, constants.ERROR, { key: response.key }, {});
+      sendResponse(req, res, 400, responseCode.ERROR, { key: response.key }, {});
     else
       sendResponse(
         req,
         res,
         200,
-        constants.SUCCESS,
+        responseCode.SUCCESS,
         { key: "productDetailsFound" },
         response.productDetails,
       );
@@ -371,7 +372,7 @@ const fetchProductDetails = async (req, res) => {
       req,
       res,
       400,
-      constants.ERROR,
+      responseCode.ERROR,
       { key: "somethingWentWrong" },
       {},
     );
@@ -715,6 +716,9 @@ const createCart = async (req, res) => {
         "productNotFound",
         "variantNotFound",
         "insufficientStock",
+        "taxNotFound",
+        "voucherNotFound",
+        "addressNotFound",
       ].includes(cart.key)
     )
       sendResponse(
@@ -1070,7 +1074,7 @@ const fetchCart = async (req, res) => {
         200,
         constants.SUCCESS,
         { key: "cartFound" },
-        cart.cart,
+        cart.data,
       );
   } catch (error) {
     console.log(error);
@@ -1129,6 +1133,7 @@ const placeOrderFromCart = async (req, res) => {
     );
   }
 };
+
 
 // Search
 const search = async (req, res) => {

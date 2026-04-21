@@ -1,12 +1,13 @@
-const responseCode = require("../Constant/constant");
+const responseCode = require("../../Constant/constant");
 const jwt = require("jsonwebtoken");
 const { default: localizify } = require("localizify");
 const { t } = require("localizify");
 const en = require("../../Languages/en");
 const hin = require("../../Languages/hin");
 const cryptoLib = require("cryptlib");
-const shaKey = cryptoLib.getHashSha256(process.env.KEY, 32)
+const shaKey = cryptoLib.getHashSha256(process.env.KEY, 32);
 const env = require("dotenv");
+
 env.config();
 // const constant = require('./Constant/constant')
 const repository = require("../../Module/Auth/Repository/auth.repository");
@@ -93,11 +94,10 @@ const sendResponse = async (
     key,
     component,
   );
-  let response = encryption({ code: response_code, message: message, data: data })
+  // console.log('me khiladi', response_code)
+  let response = { code: response_code, message: message, data: data };
   // console.log(response_code)
-  return res
-    .status(statuscode)
-    .send(response);
+  return res.status(statuscode).send(response);
 };
 
 // Check API Key
@@ -111,38 +111,44 @@ const checkAPIKey = (req, res, next) => {
   }
 };
 
-
-const encryption = (responseData)=>{
+const encryption = (responseData) => {
   try {
-    if(responseData && Object.keys(responseData).length > 0){
-      return cryptoLib.encrypt(JSON.stringify(responseData), shaKey, process.env.IV)
+    if (responseData && Object.keys(responseData).length > 0) {
+      return cryptoLib.encrypt(
+        JSON.stringify(responseData),
+        shaKey,
+        process.env.IV,
+      );
     }
   } catch (error) {
-    console.log(error)
-    return responseData
-    }
-}
+    console.log(error);
+    return responseData;
+  }
+};
 
-const decryption = (req, res, next)=>{
+const decryption = (req, res, next) => {
   try {
     // console.log(req.body)
-    if(req.body && req.body.length > 0){
-      req.body = JSON.parse(cryptoLib.decrypt(req.body, shaKey, process.env.IV))
-      next()
-    }
-    else{
-      next()
+    if (req.body && req.body.length > 0) {
+      req.body = JSON.parse(
+        cryptoLib.decrypt(req.body, shaKey, process.env.IV),
+      );
+      next();
+    } else {
+      next();
     }
   } catch (error) {
-    console.log(error)
-    return sendResponse(req, res, 200, 0, "Bad Decryption", {})
+    console.log(error);
+    return sendResponse(req, res, 200, 0, "Bad Decryption", {});
   }
-}
+};
+
+
 
 module.exports = {
   sendResponse,
   checkToken,
   checkAPIKey,
   encryption,
-  decryption
+  decryption,
 };

@@ -1,29 +1,60 @@
 const common = require("../../../Common/common");
 const repository = require("../Repository/auth.repository");
 const md5 = require("md5");
-const constant = require("../../../Common/Constant/constant");
+const constant = require("../../../Constant/constant");
+const forgotPasswordTemplate = require("../../../E-mail/forgotOtpEmailTemplate");
 
 // Generate OTP
 const generateOtp = async (data) => {
   try {
-    const { country_code = null, phone = null, purpose } = data;
-    const otp = Math.floor(1000 + Math.random() * 9999);
+    const { country_code = null, phone = null, email, purpose } = data;
+    const otp = Math.floor(1000 + Math.random() * 999);
+    let isEmailExist;
 
+    // If purpose is sign up then check phone should not exist otherwise it should exist
     if (purpose === "s") {
       const isPhoneExist = await repository.checkPhone(country_code + phone);
       if (isPhoneExist) return { sucess: false, key: "phoneAlreadyExist" };
-    } else {
-      const isPhoneExist = await repository.checkPhone(country_code + phone);
-      console.log("are bhai rehne de", isPhoneExist, country_code, phone);
-      if (!isPhoneExist) return { sucess: false, key: "userNotFound" };
     }
-    const checkOtp = await repository.checkOtp(country_code, phone, purpose);
+    // else if purpose is forgot password then check phone should exist otherwise it should not exist
+
+    
+    else {  
+      isEmailExist = await repository.checkEmail(email);
+      if (!isEmailExist) return { sucess: false, key: "userNotFound" };
+    }
+
+    let checkOtp;
+    if (purpose === "s") {
+      checkOtp = await repository.checkOtpViaPhone(
+        country_code,
+        phone,
+        purpose,
+      );
+    } else {
+      checkOtp = await repository.checkOtpViaEmail(email, purpose);
+    }
     if (checkOtp) {
       if (checkOtp.updated_at > new Date(Date.now() - 30 * 1000))
         return { sucess: false, key: "pleaseHold" };
     }
-    await repository.createOtpViaPhone(country_code, phone, otp, purpose);
-    return { sucess: true, key: "otpSent" };
+
+    if (purpose === "s")
+      await repository.createOtpViaPhone(country_code, phone, otp, purpose);
+    else {
+      const sendMail = await common.sendEmail(
+        email,
+        "OTP for forgot password",
+        forgotPasswordTemplate(isEmailExist.name, otp),
+      );
+
+      if (!sendMail || !sendMail.success) {
+        return { sucess: false, key: sendMail.message };
+      }
+      await repository.createOtpViaEmail(email, otp, purpose);
+    }
+
+    return { sucess: true, key: "otpSent", data: otp };
   } catch (error) {
     console.log(error);
     return { sucess: false, key: "somethingWentWrong" };
@@ -64,14 +95,18 @@ const checkCredential = async (data) => {
 // Validate OTP
 const validateOtp = async (data) => {
   try {
-    const { country_code = null, phone = null, otp, purpose } = data;
+    const { country_code = null, phone = null, email, otp, purpose } = data;
 
-    const isOtpRowExist = await repository.checkOtp(
-      country_code,
-      phone,
-      purpose,
-    );
-    console.log(isOtpRowExist);
+    let isOtpRowExist;
+
+    if (purpose === "s")
+      isOtpRowExist = await repository.checkOtpViaPhone(
+        country_code,
+        phone,
+        purpose,
+      );
+    else isOtpRowExist = await repository.checkOtpViaEmail(email, purpose);
+
     if (!isOtpRowExist) return { sucess: false, key: "otpNotFound" };
     const FIVE_MINUTES = 5 * 60 * 1000;
     const isExpired =
@@ -113,14 +148,23 @@ const signUp = async (data) => {
       ip,
     } = data;
 
+    const is_verified = await repository.checkUserVerification(
+      country_code,
+      phone,
+      "s",
+    );
+    // console.log(is_verified);
+    if (!is_verified) return { sucess: false, key: "phoneNotVerified" };
+
     if (password !== confirm_password)
       return { sucess: false, key: "passwordMismatch" };
 
+    // Is User Exist or not
     const checkCredentialResult =
       login_type === "s"
         ? await checkCredential({ email, country_code, phone })
         : await checkCredential({ email, social_id });
-    // console.log(checkCredentialResult)
+          // console.log(checkCredentialResult)
     if (!checkCredentialResult.sucess)
       return {
         sucess: false,
@@ -128,6 +172,7 @@ const signUp = async (data) => {
         errors: checkCredentialResult.errors,
       };
 
+    // Sign Up
     const signUpResult = await repository.signUp(
       name,
       email,
@@ -468,15 +513,11 @@ const forgotPassword = async (email) => {
     if (!query) return { success: false, key: "emailNotRegistered" };
     if (query.login_type !== "s")
       return { success: false, key: "invalidRequest" };
-    const otp = await generateOtp({
-      country_code: query.country_code,
-      phone: query.phone,
-      purpose: "f",
-    });
-    console.log(otp);
-    if (!otp) return { success: false, key: otp.key };
 
-    return { success: true, key: otp.key };
+    const otp = await generateOtp({ email: query.email, purpose: "f" });
+    if (!otp || !otp.sucess) return { success: false, key: otp.key };
+
+    return { success: true, key: otp.key, data: otp.data };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -484,7 +525,7 @@ const forgotPassword = async (email) => {
 };
 
 // Update Password
-const updatePassword = async (data, loggedInUser) => {
+const changePassword = async (data, loggedInUser) => {
   try {
     const { current_password, new_password, confirm_password } = data;
     if (new_password !== confirm_password)
@@ -497,12 +538,51 @@ const updatePassword = async (data, loggedInUser) => {
     if (user.password !== md5(current_password))
       return { success: false, key: "invalidCurrentPassword" };
 
-    const result = await repository.updatePassword(
+    const result = await repository.changePassword(
       user.user_id,
       md5(new_password),
     );
     if (!result.success) return { success: false, key: "passwordChangeFailed" };
     return { success: true, key: "passwordChangeSuccess" };
+  } catch (error) {
+    console.log(error);
+    return { success: false, key: "somethingWentWrong" };
+  }
+};
+
+// Update Password via Email OTP
+const updatePassword = async (data) => {
+  try {
+    const { email, new_password, confirm_password } = data;
+
+    if (new_password !== confirm_password)
+      return { success: false, key: "passwordMismatch" };
+
+    const user = await repository.checkEmail(email);
+    if (!user) return { success: false, key: "emailNotRegistered" };
+    if (user.login_type !== "s")
+      return { success: false, key: "invalidRequest" };
+
+    const verifiedOtp = await repository.checkVerifiedOtpViaEmail(email, "f");
+    if (!verifiedOtp) return { success: false, key: "otpNotVerified" };
+
+    const FIFTEEN_MINUTES = 15 * 60 * 1000;
+    if (
+      Date.now() - new Date(verifiedOtp.updated_at).getTime() >
+      FIFTEEN_MINUTES
+    )
+      return { success: false, key: "otpExpired" };
+
+   
+   
+   
+    const result = await repository.changePassword(
+      user.user_id,
+      md5(new_password),
+    );
+    if (!result.success) return { success: false, key: "passwordChangeFailed" };
+
+    return { success: true, key: "passwordResetSuccess" };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -519,5 +599,6 @@ module.exports = {
   signIn,
   logout,
   forgotPassword,
+  changePassword,
   updatePassword,
 };

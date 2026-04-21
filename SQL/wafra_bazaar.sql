@@ -98,6 +98,38 @@ INSERT INTO `tbl_banner` (`banner_id`, `title`, `image_url`, `redirect_type`, `r
 
 -- --------------------------------------------------------
 
+ 
+DROP TABLE IF EXISTS `tbl_voucher`;
+CREATE TABLE IF NOT EXISTS `tbl_voucher` (
+  `voucher_id` bigint NOT NULL AUTO_INCREMENT,
+  `voucher_name` varchar(64) NOT NULL,
+  `voucher_code` varchar(8) NOT NULL,
+  `discount_type` enum('flat','percentage') NOT NULL,
+  `amount` decimal(16,2) NOT NULL,
+  `start_time` timestamp NOT NULL,
+  `end_time` timestamp NOT NULL,
+  `max_value` decimal(16,2) DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`voucher_id`)
+)
+-----------------------------------------------------------------------------------
+
+DROP TABLE IF EXISTS `tbl_voucher_redeem`;
+CREATE TABLE IF NOT EXISTS `tbl_voucher_redeem` (
+  `redeem_id` bigint NOT NULL AUTO_INCREMENT,
+  `voucher_id` bigint NOT NULL,
+  `user_id` bigint NOT NULL,
+  `order_id` bigint NOT NULL,
+  `is_active` int NOT NULL DEFAULT '1',
+  `is_deleted` int NOT NULL DEFAULT '0',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`redeem_id`)
+)
+
 CREATE TABLE tbl_return_order_data (
     id INT PRIMARY KEY AUTO_INCREMENT,
     order_item_id INT NOT NULL,
@@ -177,9 +209,14 @@ CREATE TABLE IF NOT EXISTS `tbl_cart` (
   `cart_id` int NOT NULL AUTO_INCREMENT,
   `user_id` int DEFAULT NULL,
   `tax_id` int DEFAULT NULL,
-  `coupon_id` int DEFAULT NULL,
+  `voucher_id` bigint DEFAULT NULL,
   `address_id` int DEFAULT NULL,
-  `delivery_date` date DEFAULT NULL,
+  `tax_amount` decimal(10,2) DEFAULT '0.00',
+  `delivery_charge` decimal(10,2) DEFAULT '0.00',
+  `offer_amount` decimal(10,2) DEFAULT '0.00',
+  `subtotal` decimal(10,2) DEFAULT '0.00',
+  `total_price` decimal(10,2) DEFAULT '0.00',
+  `is_checkedout` tinyint DEFAULT '0',
   `is_active` tinyint DEFAULT '1',
   `is_delete` tinyint DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
@@ -191,14 +228,14 @@ CREATE TABLE IF NOT EXISTS `tbl_cart` (
 -- Dumping data for table `tbl_cart`
 --
 
-INSERT INTO `tbl_cart` (`cart_id`, `user_id`, `tax_id`, `coupon_id`, `address_id`, `delivery_date`, `is_active`, `is_delete`, `created_at`, `updated_at`) VALUES
-(1, 1, 1, 1, 1, '2026-04-15', 1, 0, '2026-04-13 08:14:06', '2026-04-13 08:14:06'),
-(2, 2, 1, NULL, 2, '2026-04-16', 1, 0, '2026-04-13 08:14:06', '2026-04-13 08:14:06'),
-(3, 1, 3, NULL, 1, '2026-04-15', 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
-(4, 2, 2, 1, 2, '2026-04-16', 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
-(5, 3, 1, NULL, NULL, NULL, 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
-(6, 4, 3, NULL, 3, '2026-04-14', 0, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
-(7, 5, 2, 2, 4, '2026-04-17', 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37');
+INSERT INTO `tbl_cart` (`cart_id`, `user_id`, `tax_id`, `voucher_id`, `address_id`, `tax_amount`, `delivery_charge`, `offer_amount`, `subtotal`, `total_price`, `is_checkedout`, `is_active`, `is_delete`, `created_at`, `updated_at`) VALUES
+(1, 1, 1, 1, 1, 0.00, 0.00, 0.00, 0.00, 0.00, 0, 1, 0, '2026-04-13 08:14:06', '2026-04-13 08:14:06'),
+(2, 2, 1, NULL, 2, 0.00, 0.00, 0.00, 0.00, 0.00, 0, 1, 0, '2026-04-13 08:14:06', '2026-04-13 08:14:06'),
+(3, 1, 3, NULL, 1, 0.00, 0.00, 0.00, 0.00, 0.00, 1, 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
+(4, 2, 2, 1, 2, 0.00, 0.00, 0.00, 0.00, 0.00, 0, 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
+(5, 3, 1, NULL, NULL, 0.00, 0.00, 0.00, 0.00, 0.00, 0, 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
+(6, 4, 3, NULL, 3, 0.00, 0.00, 0.00, 0.00, 0.00, 0, 0, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37'),
+(7, 5, 2, 2, 4, 0.00, 0.00, 0.00, 0.00, 0.00, 0, 1, 0, '2026-04-13 08:49:37', '2026-04-13 08:49:37');
 
 -- --------------------------------------------------------
 
@@ -591,6 +628,7 @@ CREATE TABLE IF NOT EXISTS `tbl_order` (
   `discount_name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `discount_type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `discount_value` decimal(10,2) DEFAULT NULL,
+  `voucher_name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `company` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `address1` text COLLATE utf8mb4_general_ci NOT NULL,

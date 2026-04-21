@@ -4,12 +4,12 @@ const { param } = require("../Routes/user.routes");
 // == Check Functions ==
 
 // Check if product exists
-const getProductById  = async (product_id) => {   
-const [[product]] = await conn.query(
+const getProductById = async (product_id) => {
+  const [[product]] = await conn.query(
     `select product_id from tbl_product where product_id = ? and is_active = 1 and is_delete = 0`,
     [product_id],
-  ); 
-return product || null;
+  );
+  return product || null;
 };
 
 // Check variant exists for product
@@ -32,10 +32,10 @@ const getUserById = async (user_id) => {
 
 // Check category exists by ID
 const getCategoryById = async (category_id) => {
-      const [[category]] = await conn.query(
-      `select category_id from tbl_category where parent_id is not null and is_active = 1 and is_delete = 0 order by category_id limit 1`,
-    );
-    return category || null;
+  const [[category]] = await conn.query(
+    `select category_id from tbl_category where parent_id is not null and is_active = 1 and is_delete = 0 order by category_id limit 1`,
+  );
+  return category || null;
 };
 
 // Get cart item by user_id, product_id and variant_id
@@ -49,9 +49,82 @@ const getCartItem = async (user_id, product_id, variant_id) => {
        AND is_active = 1 
        AND is_delete = 0 
      LIMIT 1`,
-    [user_id, product_id, variant_id]
+    [user_id, product_id, variant_id],
   );
   return rows;
+};
+
+// Get active (non-checkedout) cart for user
+const getActiveCartByUserId = async (user_id) => {
+  const [[cart]] = await conn.query(
+    `SELECT
+      cart_id,
+      user_id,
+      tax_id,
+      voucher_id,
+      address_id,
+      tax_amount,
+      delivery_charge,
+      offer_amount,
+      subtotal,
+      total_price,
+      is_checkedout,
+      is_active,
+      is_delete
+    FROM tbl_cart
+    WHERE user_id = ?
+      AND is_active = 1
+      AND is_delete = 0
+      AND is_checkedout = 0
+    ORDER BY cart_id DESC
+    LIMIT 1`,
+    [user_id],
+  );
+  return cart || null;
+};
+
+// Create cart
+const createCartHeader = async (user_id) => {
+  const [result] = await conn.query(
+    `INSERT INTO tbl_cart (user_id) VALUES (?)`,
+    [user_id],
+  );
+  return result.insertId;
+};
+
+const touchCart = async (cart_id) => {
+  await conn.query(
+    `UPDATE tbl_cart
+     SET updated_at = CURRENT_TIMESTAMP
+     WHERE cart_id = ?`,
+    [cart_id],
+  );
+};
+
+const updateCartHeader = async (cart_id, object) => {
+  const [result] = await conn.query(
+    `UPDATE tbl_cart
+     SET ?
+     WHERE cart_id = ?
+       AND is_active = 1
+       AND is_delete = 0
+       AND is_checkedout = 0`,
+    [object, cart_id],
+  );
+
+  return result.affectedRows;
+};
+
+const markCartCheckedout = async (cart_id) => {
+  await conn.query(
+    `UPDATE tbl_cart
+     SET is_checkedout = 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE cart_id = ?
+       AND is_active = 1
+       AND is_delete = 0`,
+    [cart_id],
+  );
 };
 // == Check Functions ==
 
@@ -68,7 +141,7 @@ const fetchBanners = async () => {
 const fetchStores = async (data) => {
   const page = Number(data?.page) || 1;
   const limit = Number(data?.limit) || 10;
-  const query = `select s.store_id, s.name, min(sd.image_url), ifnull(avg(sr.rating), 0) as rating, count(sr.rating) as review_count 
+  const query = `select s.store_id, s.name, min(sd.image_url) as image_url, ifnull(avg(sr.rating), 0) as rating, count(sr.rating) as review_count 
         from tbl_store s 
         left join tbl_store_data sd on s.store_id = sd.store_id and sd.is_active = 1 and sd.is_deleted = 0
         left join tbl_store_rating sr on s.store_id = sr.store_id and sr.is_active = 1 and sr.is_delete = 0
@@ -172,7 +245,6 @@ const fetchStoreProducts = async (data) => {
     MAX(d.discount_id) AS discount_id,
     MAX(d.amount_type) AS amount_type,
     MAX(d.amount) AS amount,
-    MAX(d.max_value) AS max_value,
     CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
     IFNULL(AVG(pr.rating), 0) AS avg_rating,
     COUNT(pr.product_rating_id) AS rating_count
@@ -181,8 +253,12 @@ const fetchStoreProducts = async (data) => {
     ON p.product_id = pd.product_id
     AND pd.is_active = 1
     AND pd.is_delete = 0
+  LEFT JOIN tbl_product_discount pds
+    ON p.product_id = pds.product_id
+    AND pds.is_active = 1
+    AND pds.is_delete = 0
   LEFT JOIN tbl_discount d
-    ON p.product_id = d.product_id
+    ON pds.discount_id = d.discount_id
     AND d.is_active = 1
     AND d.is_delete = 0
     AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -218,8 +294,9 @@ const fetchProductDetails = async (data) => {
   p.product_id,
   p.store_id,
   p.title,
-  p.category_id,
+  p.sub_category_id,
   c.cate_name AS sub_category_name,
+  parent_c.category_id AS category_id,
   parent_c.cate_name AS category_name,
   p.description,
   p.additional_info,
@@ -228,7 +305,6 @@ const fetchProductDetails = async (data) => {
   d.discount_id AS discount_id,
   d.amount_type AS amount_type,
   d.amount AS amount,
-  d.max_value AS max_value,
   CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
   s.name AS store_name,
   s.description AS store_description,
@@ -247,8 +323,13 @@ LEFT JOIN tbl_product_rating pr
   AND pr.is_active = 1
   AND pr.is_delete = 0
 
+LEFT JOIN tbl_product_discount pds
+  ON p.product_id = pds.product_id
+  AND pds.is_active = 1
+  AND pds.is_delete = 0
+
 LEFT JOIN tbl_discount d
-  ON p.product_id = d.product_id
+  ON pds.discount_id = d.discount_id
   AND d.is_active = 1
   AND d.is_delete = 0
   AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -261,7 +342,7 @@ LEFT JOIN tbl_wishlist w
   AND w.is_delete = 0
 
 LEFT JOIN tbl_category c
-  ON p.category_id = c.category_id
+  ON p.sub_category_id = c.category_id
   AND c.is_active = 1
   AND c.is_delete = 0
 
@@ -297,19 +378,26 @@ const fetchTopDeals = async (data) => {
   const limit = Number(data?.limit) || 3;
 
   const query = `SELECT
-  d.discount_id,
   p.product_id,
   p.title,
   MIN(pd.image_url) AS image_url,
-  d.amount_type,
-  d.amount,
-  d.max_value,
   CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
-  IFNULL(AVG(pr.rating), 0) AS avg_rating,
-  COUNT(pr.product_rating_id) AS rating_count
+  MAX(d.amount_type) AS discount_type,
+  MAX(d.amount) AS discount_value,
+  CASE
+    WHEN MAX(d.amount) IS NULL THEN NULL
+    WHEN MAX(d.amount_type) = 'percentage' THEN CONCAT(MAX(d.amount), '% OFF')
+    WHEN MAX(d.amount_type) = 'flat' THEN CONCAT(MAX(d.amount), ' OFF')
+    ELSE CONCAT(MAX(d.amount), ' OFF')
+  END AS discount_label,
+  MIN(v.price) AS price
 FROM tbl_discount d
+INNER JOIN tbl_product_discount pds
+  ON d.discount_id = pds.discount_id
+  AND pds.is_active = 1
+  AND pds.is_delete = 0
 INNER JOIN tbl_product p
-  ON d.product_id = p.product_id
+  ON pds.product_id = p.product_id
   AND p.is_active = 1
   AND p.is_delete = 0
 LEFT JOIN tbl_product_data pd
@@ -325,13 +413,17 @@ LEFT JOIN tbl_wishlist w
   AND w.user_id = ?
   AND w.is_active = 1
   AND w.is_delete = 0
+LEFT JOIN tbl_variants v
+  ON p.product_id = v.product_id
+  AND v.is_active = 1
+  AND v.is_delete = 0
 WHERE d.is_active = 1
   AND d.is_delete = 0
   AND d.amount > 0
   AND (d.start_time IS NULL OR d.start_time <= NOW())
   AND (d.end_time IS NULL OR d.end_time >= NOW())
-GROUP BY d.discount_id
-ORDER BY avg_rating DESC, rating_count DESC
+GROUP BY p.product_id
+ORDER BY p.created_at DESC
 LIMIT ?, ?`;
   const params = [user_id, (page - 1) * limit, limit];
 
@@ -347,34 +439,27 @@ const fetchTrendingNow = async (data) => {
   p.product_id,
   p.title,
   MIN(pd.image_url) AS image_url,
-  MAX(d.discount_id) AS discount_id,
-  MAX(d.amount_type) AS amount_type,
-  MAX(d.amount) AS amount,
-  MAX(d.max_value) AS max_value,
-  cs.cate_name AS sub_category_name,
-  c.cate_name AS category_name,
   CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
-  IFNULL(AVG(pr.rating), 0) AS avg_rating,
-  COUNT(pr.product_rating_id) AS rating_count
+  MAX(d.amount_type) AS discount_type,
+  MAX(d.amount) AS discount_value,
+  CASE
+    WHEN MAX(d.amount) IS NULL THEN NULL
+    WHEN MAX(d.amount_type) = 'percentage' THEN CONCAT(MAX(d.amount), '% OFF')
+    WHEN MAX(d.amount_type) = 'flat' THEN CONCAT(MAX(d.amount), ' OFF')
+    ELSE CONCAT(MAX(d.amount), ' OFF')
+  END AS discount_label,
+  MIN(v.price) AS price
 FROM tbl_product p
 LEFT JOIN tbl_product_data pd
   ON p.product_id = pd.product_id
   AND pd.is_active = 1
   AND pd.is_delete = 0
-LEFT JOIN tbl_product_rating pr
-  ON p.product_id = pr.product_id
-  AND pr.is_active = 1
-  AND pr.is_delete = 0
-LEFT JOIN tbl_category cs
-  ON p.category_id = cs.category_id
-  AND cs.is_active = 1
-  AND cs.is_delete = 0
-LEFT JOIN tbl_category c
-  ON cs.parent_id = c.category_id
-  AND c.is_active = 1
-  AND c.is_delete = 0
+LEFT JOIN tbl_product_discount pds
+  ON p.product_id = pds.product_id
+  AND pds.is_active = 1
+  AND pds.is_delete = 0
 LEFT JOIN tbl_discount d
-  ON p.product_id = d.product_id
+  ON pds.discount_id = d.discount_id
   AND d.is_active = 1
   AND d.is_delete = 0
   AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -384,16 +469,20 @@ LEFT JOIN tbl_wishlist w
   AND w.user_id = ?
   AND w.is_active = 1
   AND w.is_delete = 0
+LEFT JOIN tbl_variants v
+  ON p.product_id = v.product_id
+  AND v.is_active = 1
+  AND v.is_delete = 0
 WHERE p.is_active = 1
   AND p.is_delete = 0
 `;
   const params = [user_id];
   category_id &&
-    (query += ` AND p.category_id = ?`) &&
+    (query += ` AND p.sub_category_id = ?`) &&
     params.push(category_id);
   query += `
 GROUP BY p.product_id
-ORDER BY avg_rating DESC, rating_count DESC
+ORDER BY p.created_at DESC
 LIMIT ?, ?`;
   params.push((page - 1) * Number(limit), Number(limit));
 
@@ -406,28 +495,35 @@ LIMIT ?, ?`;
 // fetch new arrivals
 const fetchNewArrivals = async (data) => {
   const user_id = Number(data?.user_id) || 0;
-  const sub_category_id = Number(data?.sub_category_id) || 1;
+  const sub_category_id = Number(data?.sub_category_id) || 5;
   const page = Number(data?.page) || 1;
   const limit = Number(data?.limit) || 3;
 
   const query = `SELECT
   p.product_id,
   p.title,
-  p.category_id,
   MIN(pd.image_url) AS image_url,
-  MAX(d.discount_id) AS discount_id,
-  MAX(d.amount_type) AS amount_type,
-  MAX(d.amount) AS amount,
-  MAX(d.max_value) AS max_value,
   CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
-  p.created_at
+  MAX(d.amount_type) AS discount_type,
+  MAX(d.amount) AS discount_value,
+  CASE
+    WHEN MAX(d.amount) IS NULL THEN NULL
+    WHEN MAX(d.amount_type) = 'percentage' THEN CONCAT(MAX(d.amount), '% OFF')
+    WHEN MAX(d.amount_type) = 'flat' THEN CONCAT(MAX(d.amount), ' OFF')
+    ELSE CONCAT(MAX(d.amount), ' OFF')
+  END AS discount_label,
+  MIN(v.price) AS price
 FROM tbl_product p
 LEFT JOIN tbl_product_data pd
   ON p.product_id = pd.product_id
   AND pd.is_active = 1
   AND pd.is_delete = 0
+LEFT JOIN tbl_product_discount pds
+  ON p.product_id = pds.product_id
+  AND pds.is_active = 1
+  AND pds.is_delete = 0
 LEFT JOIN tbl_discount d
-  ON p.product_id = d.product_id
+  ON pds.discount_id = d.discount_id
   AND d.is_active = 1
   AND d.is_delete = 0
   AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -437,9 +533,13 @@ LEFT JOIN tbl_wishlist w
   AND w.user_id = ?
   AND w.is_active = 1
   AND w.is_delete = 0
+LEFT JOIN tbl_variants v
+  ON p.product_id = v.product_id
+  AND v.is_active = 1
+  AND v.is_delete = 0
 WHERE p.is_active = 1
   AND p.is_delete = 0
-  AND p.category_id = ?
+  AND p.sub_category_id = ?
 GROUP BY p.product_id
 ORDER BY p.created_at DESC
 LIMIT ?, ?`;
@@ -459,12 +559,16 @@ const fetchBestSelling = async (data) => {
   p.product_id,
   p.title,
   MIN(pd.image_url) AS image_url,
-  MAX(d.discount_id) AS discount_id,
-  MAX(d.amount_type) AS amount_type,
-  MAX(d.amount) AS amount,
-  MAX(d.max_value) AS max_value,
   CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
-  COUNT(oi.order_item_id) AS order_count
+  MAX(d.amount_type) AS discount_type,
+  MAX(d.amount) AS discount_value,
+  CASE
+    WHEN MAX(d.amount) IS NULL THEN NULL
+    WHEN MAX(d.amount_type) = 'percentage' THEN CONCAT(MAX(d.amount), '% OFF')
+    WHEN MAX(d.amount_type) = 'flat' THEN CONCAT(MAX(d.amount), ' OFF')
+    ELSE CONCAT(MAX(d.amount), ' OFF')
+  END AS discount_label,
+  MIN(v.price) AS price
 FROM tbl_product p
 LEFT JOIN tbl_order_items oi
   ON p.product_id = oi.product_id
@@ -478,8 +582,12 @@ LEFT JOIN tbl_product_data pd
   ON p.product_id = pd.product_id
   AND pd.is_active = 1
   AND pd.is_delete = 0
+LEFT JOIN tbl_product_discount pds
+  ON p.product_id = pds.product_id
+  AND pds.is_active = 1
+  AND pds.is_delete = 0
 LEFT JOIN tbl_discount d
-  ON p.product_id = d.product_id
+  ON pds.discount_id = d.discount_id
   AND d.is_active = 1
   AND d.is_delete = 0
   AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -489,10 +597,14 @@ LEFT JOIN tbl_wishlist w
   AND w.user_id = ?
   AND w.is_active = 1
   AND w.is_delete = 0
+LEFT JOIN tbl_variants v
+  ON p.product_id = v.product_id
+  AND v.is_active = 1
+  AND v.is_delete = 0
 WHERE p.is_active = 1
   AND p.is_delete = 0
 GROUP BY p.product_id
-ORDER BY order_count DESC
+ORDER BY COUNT(oi.order_item_id) DESC
 LIMIT ?, ?`;
   const params = [user_id, (page - 1) * limit, limit];
 
@@ -511,13 +623,16 @@ const fetchRecentlyBought = async (data) => {
   p.product_id,
   p.title,
   MIN(pd.image_url) AS image_url,
-  MAX(d.discount_id) AS discount_id,
-  MAX(d.amount_type) AS amount_type,
-  MAX(d.amount) AS amount,
-  MAX(d.max_value) AS max_value,
   CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
-  MAX(o.created_at) AS bought_at,
-  COUNT(oi.order_item_id) AS bought_count
+  MAX(d.amount_type) AS discount_type,
+  MAX(d.amount) AS discount_value,
+  CASE
+    WHEN MAX(d.amount) IS NULL THEN NULL
+    WHEN MAX(d.amount_type) = 'percentage' THEN CONCAT(MAX(d.amount), '% OFF')
+    WHEN MAX(d.amount_type) = 'flat' THEN CONCAT(MAX(d.amount), ' OFF')
+    ELSE CONCAT(MAX(d.amount), ' OFF')
+  END AS discount_label,
+  MIN(v.price) AS price
 FROM tbl_order o
 INNER JOIN tbl_order_items oi
   ON o.order_id = oi.order_id
@@ -531,8 +646,12 @@ LEFT JOIN tbl_product_data pd
   ON p.product_id = pd.product_id
   AND pd.is_active = 1
   AND pd.is_delete = 0
+LEFT JOIN tbl_product_discount pds
+  ON p.product_id = pds.product_id
+  AND pds.is_active = 1
+  AND pds.is_delete = 0
 LEFT JOIN tbl_discount d
-  ON p.product_id = d.product_id
+  ON pds.discount_id = d.discount_id
   AND d.is_active = 1
   AND d.is_delete = 0
   AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -542,11 +661,15 @@ LEFT JOIN tbl_wishlist w
   AND w.user_id = ?
   AND w.is_active = 1
   AND w.is_delete = 0
+LEFT JOIN tbl_variants v
+  ON p.product_id = v.product_id
+  AND v.is_active = 1
+  AND v.is_delete = 0
 WHERE o.user_id = ?
   AND o.is_active = 1
   AND o.is_delete = 0
 GROUP BY p.product_id
-ORDER BY bought_at DESC
+ORDER BY MAX(o.created_at) DESC
 LIMIT ?, ?`;
   const params = [user_id, user_id, (page - 1) * limit, limit];
 
@@ -557,7 +680,7 @@ LIMIT ?, ?`;
 // fetch categories
 const fetchCategory = async () => {
   const [categories] = await conn.query(
-    `select category_id, cate_name, parent_id, image_url from tbl_category where parent_id is null and is_active = 1 and is_delete = 0 order by category_id`,
+    `select category_id, cate_name, image_url from tbl_category where parent_id is null and is_active = 1 and is_delete = 0 order by category_id`,
   );
 
   return categories;
@@ -616,14 +739,14 @@ const fetchAvailableProductTypes = async (product_id) => {
 };
 
 // Fetch Colors of Product
-const fetchProductColors = async (product_id) => {
+const fetchProductColors = async (product_id, size_id) => {
   const [colors] = await conn.query(
     `SELECT c.color_id, c.name AS color_value
     FROM tbl_variants v
     LEFT JOIN tbl_color c ON v.color_id = c.color_id AND c.is_active = 1 AND c.is_delete = 0
-    WHERE v.product_id = ? and v.is_active = 1 and v.is_delete = 0 and v.qty > 0
+    WHERE v.product_id = ? and v.size_id = ? and v.is_active = 1 and v.is_delete = 0 and v.qty > 0
     GROUP BY c.name`,
-    [product_id],
+    [product_id, size_id],
   );
   return colors;
 };
@@ -639,7 +762,6 @@ const fetchSuggestedProducts = async (data) => {
     d.discount_id AS discount_id,
     d.amount_type AS amount_type,
     d.amount AS amount,
-    d.max_value AS max_value,
     CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist
 
     from tbl_product p
@@ -647,8 +769,11 @@ const fetchSuggestedProducts = async (data) => {
     LEFT JOIN tbl_product_data pd
       ON p.product_id = pd.product_id AND pd.is_active = 1 AND pd.is_delete = 0
 
+    LEFT JOIN tbl_product_discount pds
+      ON p.product_id = pds.product_id AND pds.is_active = 1 AND pds.is_delete = 0
+
     LEFT JOIN tbl_discount d
-      ON p.product_id = d.product_id AND d.is_active = 1 AND d.is_delete = 0
+      ON pds.discount_id = d.discount_id AND d.is_active = 1 AND d.is_delete = 0
       AND d.is_active = 1
         AND d.is_delete = 0
         AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -661,7 +786,7 @@ const fetchSuggestedProducts = async (data) => {
 
     WHERE p.is_active = 1
       AND p.is_delete = 0
-      AND p.category_id = ?
+      AND p.sub_category_id = ?
 
     GROUP BY p.product_id
     ORDER BY p.created_at DESC
@@ -675,8 +800,8 @@ const fetchSuggestedProducts = async (data) => {
 
 // Fetch Size Chart
 const fetchSizeChart = async (product_id) => {
-    const [sizeChart] = await conn.query(
-      `SELECT 
+  const [sizeChart] = await conn.query(
+    `SELECT 
     s.value AS size_value,
     scv.measurement_name,
     scv.value AS measurement_value,
@@ -685,7 +810,7 @@ const fetchSizeChart = async (product_id) => {
 FROM tbl_product p
 
 JOIN tbl_size_chart sc 
-    ON p.category_id = sc.category_id 
+    ON p.sub_category_id = sc.category_id 
     AND sc.is_active = 1 
     AND sc.is_delete = 0
 
@@ -700,11 +825,10 @@ JOIN tbl_size s
     AND s.is_delete = 0
 
 WHERE p.product_id = ?`,
-      [product_id],
-    );
+    [product_id],
+  );
 
-    return sizeChart || null;
-
+  return sizeChart || null;
 };
 
 // Update cart item
@@ -713,27 +837,123 @@ const updateCartItem = async (cart_item_id, quantity, price) => {
     `UPDATE tbl_cart_items 
      SET quantity = ?, price = ? 
      WHERE cart_item_id = ?`,
-    [quantity, price, cart_item_id]
+    [quantity, price, cart_item_id],
   );
 };
 
 // Insert item into cart
-const insertCartItem = async (user_id, product_id, variant_id, quantity, price) => {
+const insertCartItem = async (
+  user_id,
+  product_id,
+  variant_id,
+  quantity,
+  price,
+) => {
   const [result] = await conn.query(
     `INSERT INTO tbl_cart_items 
      (user_id, product_id, variant_id, quantity, price) 
      VALUES (?, ?, ?, ?, ?)`,
-    [user_id, product_id, variant_id, quantity, price]
+    [user_id, product_id, variant_id, quantity, price],
   );
   return result.insertId;
 };
 
 // Delete cart item
-const deleteCartItem = async (conn, cart_item_id) => {
-  await conn.query(
-    `DELETE FROM tbl_cart_items WHERE cart_item_id = ?`,
-    [cart_item_id]
+const deleteCartItem = async (cart_item_id) => {
+  await conn.query(`DELETE FROM tbl_cart_items WHERE cart_item_id = ?`, [
+    cart_item_id,
+  ]);
+};
+
+// Fetch cart items
+const fetchCartItems = async (data) => {
+  const user_id = Number(data?.user_id) || 0;
+  const page = Number(data?.page) || 1;
+  const limit = Number(data?.limit) || 20;
+
+  const [cartItems] = await conn.query(
+    `SELECT
+      ci.cart_item_id,
+      ci.product_id,
+      p.title,
+      MIN(pd.image_url) AS image_url,
+      ci.variant_id,
+      v.size_id,
+      sz.value AS size_name,
+      v.color_id,
+      co.name AS color_name,
+      pt.name AS product_type_name,
+      v.sku,
+      ci.quantity,
+      ci.price,
+      (ci.quantity * ci.price) AS total_price,
+      s.store_id,
+      s.name AS store_name
+    FROM tbl_cart_items ci
+
+    LEFT JOIN tbl_product p
+      ON ci.product_id = p.product_id
+      AND p.is_active = 1
+      AND p.is_delete = 0
+
+    LEFT JOIN tbl_product_data pd
+      ON p.product_id = pd.product_id
+      AND pd.is_active = 1
+      AND pd.is_delete = 0
+
+    LEFT JOIN tbl_variants v
+      ON ci.variant_id = v.variant_id
+      AND v.is_active = 1
+      AND v.is_delete = 0
+
+    LEFT JOIN tbl_store s
+      ON p.store_id = s.store_id
+      AND s.is_active = 1
+      AND s.is_delete = 0
+
+    LEFT JOIN tbl_product_type pt
+      ON v.product_type_id = pt.product_type_id
+      AND pt.is_active = 1
+
+    LEFT JOIN tbl_color co
+      ON v.color_id = co.color_id
+      AND co.is_active = 1
+      AND co.is_delete = 0
+
+    LEFT JOIN tbl_size sz
+      ON v.size_id = sz.size_id
+      AND sz.is_active = 1
+      AND sz.is_delete = 0
+
+    WHERE ci.user_id = ?
+      AND ci.is_active = 1
+      AND ci.is_delete = 0
+
+    GROUP BY ci.cart_item_id
+    ORDER BY ci.created_at DESC
+    LIMIT ?, ?`,
+    [user_id, (page - 1) * limit, limit],
   );
+
+  return cartItems;
+};
+
+// Count user's total addresses
+const countUserAddresses = async (user_id) => {
+  const [[{ count }]] = await conn.query(
+    `SELECT COUNT(*) AS count FROM tbl_address WHERE user_id = ? AND is_active = 1 AND is_deleted = 0`,
+    [user_id],
+  );
+  return count || 0;
+};
+
+// Reset current default address to 0
+const resetDefaultAddress = async (user_id) => {
+  const [result] = await conn.query(
+    `UPDATE tbl_address SET is_default = 0 WHERE user_id = ? AND is_default = 1 AND is_active = 1 AND is_deleted = 0`,
+    [user_id],
+  );
+  return result.changedRows;
 };
 
 // Create address
@@ -748,6 +968,7 @@ const createAddress = async (data) => {
     postal_code,
     latitude,
     longitude,
+    is_default,
   } = data;
   const object = {
     user_id,
@@ -759,6 +980,7 @@ const createAddress = async (data) => {
     postal_code,
     latitude,
     longitude,
+    is_default: is_default || 0,
   };
   const [address] = await conn.query(`INSERT INTO tbl_address set ?`, [object]);
 
@@ -868,6 +1090,18 @@ const updateAddress = async (data, address_id, user_id) => {
   return result.changedRows;
 };
 
+// Set address as default
+const setDefaultAddress = async (address_id, user_id) => {
+  // First reset all defaults to 0
+  await resetDefaultAddress(user_id);
+  // Then set this address as default
+  const [result] = await conn.query(
+    `UPDATE tbl_address SET is_default = 1 WHERE address_id = ? AND user_id = ? AND is_active = 1 AND is_deleted = 0`,
+    [address_id, user_id],
+  );
+  return result.changedRows;
+};
+
 // Delete address
 const deleteAddress = async (data) => {
   const { address_id, user_id } = data;
@@ -904,10 +1138,11 @@ const createCard = async (data) => {
     exp_at,
   };
 
-  const [card] = await conn.query(`INSERT INTO tbl_card_details SET ?`, [object]);
+  const [card] = await conn.query(`INSERT INTO tbl_card_details SET ?`, [
+    object,
+  ]);
 
-  return  card.insertId
-
+  return card.insertId;
 };
 
 // Fetch card
@@ -969,73 +1204,77 @@ const deleteCard = async (data) => {
     `delete from tbl_card_details where card_detail_id = ? and user_id = ?`,
     [card_detail_id, user_id],
   );
-  console.log('kem cho', result.affectedRows);
+  console.log("kem cho", result.affectedRows);
   return result.affectedRows || 0;
 };
 
-// fetch cart items
+// fetch cart with cart details and items
 const fetchCart = async (data) => {
   const user_id = Number(data?.user_id) || 0;
-  const page = Number(data?.page) || 1;
-  const limit = Number(data?.limit) || 20;
+  const cart = await getActiveCartByUserId(user_id);
 
-  const [cartItems] = await conn.query(
-    `SELECT
-      ci.cart_item_id,
-      ci.product_id,
-      p.title ,
-      MIN(pd.image_url) AS image_url,
-      ci.variant_id,
-      v.size_id,
-      v.color_id,
-      pt.name AS product_type_name,
-      v.sku,
-      ci.quantity,
-      ci.price,
-      (ci.quantity * ci.price) AS total_price,
-      s.store_id,
-      s.name AS store_name,
-      ci.created_at,
-      ci.updated_at
-    FROM tbl_cart_items ci
-    LEFT JOIN tbl_product p
-      ON ci.product_id = p.product_id
-      AND p.is_active = 1
-      AND p.is_delete = 0
-    LEFT JOIN tbl_product_data pd
-      ON p.product_id = pd.product_id
-      AND pd.is_active = 1
-      AND pd.is_delete = 0
-    LEFT JOIN tbl_variants v
-      ON ci.variant_id = v.variant_id
-      AND v.is_active = 1
-      AND v.is_delete = 0
-    LEFT JOIN tbl_store s
-      ON p.store_id = s.store_id
-      AND s.is_active = 1
-      AND s.is_delete = 0
-    LEFT JOIN tbl_product_type pt
-      ON v.product_type_id = pt.product_type_id
-      AND pt.is_active = 1
-    WHERE ci.user_id = ?
-      AND ci.is_active = 1
-      AND ci.is_delete = 0
-    GROUP BY ci.cart_item_id
-    ORDER BY ci.created_at DESC
-    LIMIT ?, ?`,
-    [user_id, (page - 1) * limit, limit],
+  if (!cart) return null;
+
+  const items = await fetchCartItems(data);
+  const subtotal = items.reduce(
+    (sum, item) => sum + Number(item.total_price || 0),
+    0,
   );
 
-  return cartItems;
+  return {
+    ...cart,
+    subtotal,
+    total_items: items.length,
+    items,
+  };
 };
 
 // Fetch Discount
 const fetchDiscount = async (discount_id) => {
   const [[discount]] = await conn.query(
-    `SELECT discount_id, product_id, discount_name,amount_type, amount, max_value FROM tbl_discount WHERE discount_id = ? AND is_active = 1 AND is_delete = 0 AND (start_time IS NULL OR start_time <= NOW()) AND (end_time IS NULL OR end_time >= NOW())`,
+    `SELECT discount_id, discount_name, amount_type, amount, max_value FROM tbl_discount WHERE discount_id = ? AND is_active = 1 AND is_delete = 0 AND (start_time IS NULL OR start_time <= NOW()) AND (end_time IS NULL OR end_time >= NOW())`,
     [discount_id],
   );
   return discount || null;
+};
+
+const fetchVoucherByCode = async (voucher_code) => {
+  const [[voucher]] = await conn.query(
+    `SELECT voucher_id, voucher_name, voucher_code, discount_type, amount, max_value FROM tbl_voucher WHERE voucher_code = ? AND is_active = 1 AND is_deleted = 0 AND (start_time IS NULL OR start_time <= NOW()) AND (end_time IS NULL OR end_time >= NOW()) LIMIT 1`,
+    [voucher_code],
+  );
+  return voucher || null;
+};
+
+const fetchVoucherById = async (voucher_id) => {
+  const [[voucher]] = await conn.query(
+    `SELECT voucher_id, voucher_name, discount_type, amount
+     FROM tbl_voucher
+     WHERE voucher_id = ?
+       AND is_active = 1
+       AND is_deleted = 0
+       AND (start_time IS NULL OR start_time <= NOW())
+       AND (end_time IS NULL OR end_time >= NOW())
+     LIMIT 1`,
+    [voucher_id],
+  );
+
+  return voucher || null;
+};
+
+const fetchVoucherRedeem = async (voucher_id, user_id) => {
+  const [[redeem]] = await conn.query(
+    `SELECT redeem_id, voucher_id, user_id, order_id FROM tbl_voucher_redeem WHERE voucher_id = ? AND user_id = ? AND is_active = 1 AND is_deleted = 0 LIMIT 1`,
+    [voucher_id, user_id],
+  );
+  return redeem || null;
+};
+
+const insertVoucherRedeem = async (data) => {
+  const [result] = await conn.query(`INSERT INTO tbl_voucher_redeem SET ?`, [
+    data,
+  ]);
+  return result.insertId;
 };
 
 // Fetch Variant
@@ -1054,7 +1293,7 @@ const fetchVariant = async (variant_id) => {
 // Fetch Tax
 const fetchTax = async (tax_id) => {
   const [[tax]] = await conn.query(
-    `SELECT tax_id, tax_name, value AS tax_value FROM tbl_tax WHERE tax_id = ? AND is_active = 1 AND is_delete = 0`,
+    `SELECT tax_id, tax_name, value AS tax_value, value_type FROM tbl_tax WHERE tax_id = ? AND is_active = 1 AND is_delete = 0`,
     [tax_id],
   );
 
@@ -1064,10 +1303,7 @@ const fetchTax = async (tax_id) => {
 // Place order from cart
 
 const insertOrder = async (object) => {
-  const [result] = await conn.query(
-    `INSERT INTO tbl_order SET ?`,
-    [object]
-  );
+  const [result] = await conn.query(`INSERT INTO tbl_order SET ?`, [object]);
   return result.insertId;
 };
 
@@ -1090,7 +1326,7 @@ const insertOrderItems = async (items) => {
     `INSERT INTO tbl_order_items
      (order_id, product_id, variant_id, title, image_url, quantity, price, size, color, sub_category_name, category_name)
      VALUES ?`,
-    [values]
+    [values],
   );
 };
 
@@ -1099,7 +1335,7 @@ const insertOrderTracking = async (order_id) => {
     `INSERT INTO tbl_order_tracking (order_id, order_status) VALUES (?, 'pending')`,
     [order_id],
   );
-}
+};
 
 const updateVariantStock = async (item) => {
   const [result] = await conn.query(
@@ -1109,7 +1345,7 @@ const updateVariantStock = async (item) => {
        AND qty >= ?
        AND is_active = 1
        AND is_delete = 0`,
-    [item.quantity, item.variant_id, item.quantity]
+    [item.quantity, item.variant_id, item.quantity],
   );
 
   return result.affectedRows;
@@ -1123,11 +1359,11 @@ const clearCart = async (data) => {
          is_delete = 1
      WHERE user_id = ?
        AND cart_item_id IN (?)`,
-    [user_id, cartItemIds]
+    [user_id, cartItemIds],
   );
 };
 
-// Order placed done 
+// Order placed done
 
 // Place Notification
 const placeNotification = async (data) => {
@@ -1179,7 +1415,6 @@ const fetchWishlist = async (data) => {
       MAX(d.discount_id) AS discount_id,
       MAX(d.amount_type) AS amount_type,
       MAX(d.amount) AS amount,
-      MAX(d.max_value) AS max_value,
       IFNULL(AVG(pr.rating), 0) AS avg_rating,
       COUNT(pr.product_rating_id) AS rating_count
     FROM tbl_wishlist w
@@ -1191,8 +1426,12 @@ const fetchWishlist = async (data) => {
       ON p.product_id = pd.product_id
       AND pd.is_active = 1
       AND pd.is_delete = 0
+    LEFT JOIN tbl_product_discount pds
+      ON p.product_id = pds.product_id
+      AND pds.is_active = 1
+      AND pds.is_delete = 0
     LEFT JOIN tbl_discount d
-      ON p.product_id = d.product_id
+      ON pds.discount_id = d.discount_id
       AND d.is_active = 1
       AND d.is_delete = 0
       AND (d.start_time IS NULL OR d.start_time <= NOW())
@@ -1449,7 +1688,7 @@ const fetchOrderItemForRating = async (data) => {
   return orderItem || null;
 };
 
-// Fetch product 
+// Fetch product
 const fetchRatingById = async (rating_id) => {
   const [[rating]] = await conn.query(
     `SELECT
@@ -1470,7 +1709,6 @@ const fetchRatingById = async (rating_id) => {
   return rating || null;
 };
 
-
 // Create product rating
 const createProductRating = async (data) => {
   const object = {
@@ -1484,7 +1722,7 @@ const createProductRating = async (data) => {
     object,
   ]);
 
-  return rating.insertId
+  return rating.insertId;
 };
 
 // Place return order
@@ -1571,8 +1809,8 @@ const fetchNotificationById = async (notification_id, user_id) => {
 const fetchCmsAboutUs = async () => fetchCmsByTitle("About Us");
 const fetchCmsPrivacyPolicy = async () => fetchCmsByTitle("Privacy Policy");
 const fetchCmsTerms = async () => fetchCmsByTitle("Terms & Conditions");
-const fetchCmsReturnRefundPolicy = async () => fetchCmsByTitle("Refund & Return Policy");
-
+const fetchCmsReturnRefundPolicy = async () =>
+  fetchCmsByTitle("Refund & Return Policy");
 
 // insert search history
 const insertSearchHistory = async (data) => {
@@ -1612,35 +1850,45 @@ const fetchProductSearchResult = async (data) => {
       MAX(d.discount_id) AS discount_id,
       MAX(d.amount_type) AS amount_type,
       MAX(d.amount) AS amount,
-      MAX(d.max_value) AS max_value,
       MIN(v.price) AS price,
       CASE WHEN MAX(w.wishlist_id) IS NOT NULL THEN 1 ELSE 0 END AS is_wishlist,
       c.cate_name AS sub_category_name,
       parent_c.cate_name AS category_name
     FROM tbl_product p
+
     LEFT JOIN tbl_product_data pd
       ON p.product_id = pd.product_id
       AND pd.is_active = 1
       AND pd.is_delete = 0
+
+    LEFT JOIN tbl_product_discount pds
+      ON p.product_id = pds.product_id
+      AND pds.is_active = 1
+      AND pds.is_delete = 0
+
     LEFT JOIN tbl_discount d
-      ON p.product_id = d.product_id
+      ON pds.discount_id = d.discount_id
       AND d.is_active = 1
       AND d.is_delete = 0
       AND (d.start_time IS NULL OR d.start_time <= NOW())
       AND (d.end_time IS NULL OR d.end_time >= NOW())
+
     LEFT JOIN tbl_wishlist w
       ON p.product_id = w.product_id
       AND w.user_id = ?
       AND w.is_active = 1
       AND w.is_delete = 0
+
     LEFT JOIN tbl_variants v
       ON p.product_id = v.product_id
       AND v.is_active = 1
       AND v.is_delete = 0
+
     LEFT JOIN tbl_category c
-      ON p.category_id = c.category_id
+      ON p.sub_category_id = c.category_id
       AND c.is_active = 1
       AND c.is_delete = 0
+      
     LEFT JOIN tbl_category parent_c
       ON c.parent_id = parent_c.category_id
       AND parent_c.is_active = 1
@@ -1790,9 +2038,10 @@ const fetchOrderHistory = async (data) => {
       o.payment_type,
       o.tax_name,
       o.tax_value,
-      o.discount_name,
+      o.voucher_name,
       o.discount_type,
       o.discount_value,
+      o.voucher_name,
       o.name as addressee_name,
       o.company as address_company,
       o.address1,
@@ -1816,15 +2065,16 @@ const fetchOrderHistory = async (data) => {
       SELECT MAX(created_at) FROM tbl_order_tracking WHERE order_id = o.order_id AND is_active = 1 AND is_deleted = 0)
     WHERE o.user_id = ?
       AND o.is_active = 1
-      AND o.is_delete = 0`
-    tab === "delivered" && (query += ` AND ots.order_status = 'delivered' `)
-    tab === "current" && (query += ` AND ots.order_status != 'delivered' `)
-    query += ` ORDER BY o.created_at DESC LIMIT ?, ?`;
+      AND o.is_delete = 0`;
+  tab === "delivered" && (query += ` AND ots.order_status = 'delivered' `);
+  tab === "current" && (query += ` AND ots.order_status != 'delivered' `);
+  query += ` ORDER BY o.created_at DESC LIMIT ?, ?`;
 
-  const [orders] = await conn.query(
-    query,
-    [user_id, (page - 1) * limit, limit],
-  );
+  const [orders] = await conn.query(query, [
+    user_id,
+    (page - 1) * limit,
+    limit,
+  ]);
 
   if (!orders.length) return [];
 
@@ -1837,12 +2087,12 @@ const fetchOrderHistory = async (data) => {
        AND is_active = 1
        AND is_delete = 0`,
     [orderIds],
-  );  
+  );
 
   const itemMap = items.reduce((acc, item) => {
     if (!acc[item.order_id]) acc[item.order_id] = [];
     acc[item.order_id].push(item);
-    console.log(acc)
+    console.log(acc);
     return acc;
   }, {});
 
@@ -1860,16 +2110,19 @@ const fetchOrderDetails = async (data) => {
   const [[order]] = await conn.query(
     `SELECT
       o.order_id,
-      o.created_at,
+      o.created_at as ordered_at,
       o.total_price,
+      o.subtotal,
       o.payment_type,
       o.tax_name,
       o.tax_value,
-      o.discount_name,
+      o.total_final_tax,
+      o.voucher_name,
       o.discount_type,
       o.discount_value,
-      o.name,
-      o.company,
+      o.voucher_name,
+      o.name as addressee_name,
+      o.company as address_company,
       o.address1,
       o.address2,
       o.postal_code,
@@ -1921,6 +2174,7 @@ const fetchOrderDetails = async (data) => {
       image_url,
       quantity,
       price,
+      (price * quantity) AS total_price,
       size,
       color,
       category_name
@@ -1978,22 +2232,55 @@ const countNotifications = async (user_id) => {
     [user_id],
   );
   return count || 0;
-}
+};
 // Count cart items
 const countCart = async (user_id) => {
   const [[{ count }]] = await conn.query(
-    `SELECT COUNT(*) AS count FROM tbl_cart_items WHERE user_id = ? AND is_active = 1 AND is_delete = 0`,
+    `SELECT COUNT(*) AS count
+     FROM tbl_cart_items ci
+     WHERE ci.user_id = ?
+       AND ci.is_active = 1
+       AND ci.is_delete = 0
+       AND EXISTS (
+         SELECT 1
+         FROM tbl_cart c
+         WHERE c.user_id = ci.user_id
+           AND c.is_active = 1
+           AND c.is_delete = 0
+           AND c.is_checkedout = 0
+       )`,
     [user_id],
   );
   return count || 0;
-}
+};
+
+const fetchSize = async (size_id) => {
+  const [[size]] = await conn.query(
+    `SELECT size_id, value FROM tbl_size WHERE size_id = ? AND is_active = 1 AND is_delete = 0 LIMIT 1`,
+    [size_id],
+  );
+  return size || null;
+};
+
+const fetchColor = async (color_id) => {
+  const [[color]] = await conn.query(
+    `SELECT color_id, name FROM tbl_color WHERE color_id = ? AND is_active = 1 AND is_delete = 0 LIMIT 1`,
+    [color_id],
+  );
+  return color || null;
+};
 
 module.exports = {
-  getProductById ,
-  getVariantById ,                  
+  getProductById,
+  getVariantById,
   getUserById,
   getCategoryById,
   getCartItem,
+  getActiveCartByUserId,
+  createCartHeader,
+  touchCart,
+  updateCartHeader,
+  markCartCheckedout,
   fetchBanners,
   fetchStores,
   fetchRatingAndReview,
@@ -2016,6 +2303,7 @@ module.exports = {
   insertCartItem,
   updateCartItem,
   deleteCartItem,
+  fetchCartItems,
   createAddress,
   createCard,
   fetchAddress,
@@ -2064,7 +2352,17 @@ module.exports = {
   fetchVariant,
   fetchTax,
   fetchDiscount,
+  fetchVoucherByCode,
+  fetchVoucherById,
+  fetchVoucherRedeem,
+  insertVoucherRedeem,
   fetchRatingById,
   countNotifications,
-  countCart
+  countCart,
+  countUserAddresses,
+  resetDefaultAddress,
+  setDefaultAddress,
+
+  fetchSize,
+  fetchColor,
 };

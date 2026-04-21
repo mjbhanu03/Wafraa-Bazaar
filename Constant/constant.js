@@ -8,4 +8,6 @@ const responseCode = {
   ADDRESS_PENDING: 5
 }
 
-module.exports = responseCode
+const from_email = "jaymange263@gmail.com"
+
+module.exports = { responseCode, from_email }

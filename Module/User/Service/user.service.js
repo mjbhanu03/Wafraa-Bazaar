@@ -1,5 +1,6 @@
 const repository = require("../Repository/user.repository");
 const common = require("../../../Common/common");
+const { sub } = require("framer-motion/m");
 
 // Fetch Home data
 const fetchHome = async (user_id) => {
@@ -15,8 +16,8 @@ const fetchHome = async (user_id) => {
     const recentlyBoughtProducts = await repository.fetchRecentlyBought({
       user_id,
     });
-    const notifications =  await repository.countNotifications( user_id );
-    const cart = await repository.countCart( user_id );
+    const notifications = await repository.countNotifications(user_id);
+    const cart = await repository.countCart(user_id);
     // console.log(cart, notifications);
     return {
       success: true,
@@ -62,18 +63,25 @@ const fetchProductDetails = async (data) => {
     if (!productDetails)
       return { success: false, key: "noProductDetailsFound" };
     const productData = await repository.fetchProductData(data.product_id);
-    const productSizes = await repository.fetchProductSizes(data.product_id);
-    const productColors = await repository.fetchProductColors(data.product_id);
     const suggestedProducts = await repository.fetchSuggestedProducts(
       productDetails.category_id,
     );
+    const productSizes = await repository.fetchProductSizes(data.product_id);
+    const productSizesWithColors = await Promise.all(
+      productSizes.map(async (size) => ({
+        ...size,
+        colors: await repository.fetchProductColors(
+          data.product_id,
+          size.size_id,
+        ),
+      })),
+    );
     // console.log(productDetails[0].category_id);
-
 
     // const firstRow = productDetails[0];
     productDetails.product_data = productData;
-    productDetails.product_sizes = productSizes;
-    productDetails.product_colors = productColors;
+    productDetails.product_sizes = productSizesWithColors;
+    // productDetails.product_colors = productSizesWithColors;
     productDetails.suggested_products = suggestedProducts;
 
     return {
@@ -192,9 +200,9 @@ const fetchTrendingNow = async (data) => {
 // Fetch new arrivals
 const fetchNewArrivals = async (data) => {
   try {
-    if(data.category_id){
+    if (data.category_id) {
       const category = await repository.getCategoryById(data.category_id);
-      if(!category) return { success: false, key: "categoryNotFound" };
+      if (!category) return { success: false, key: "categoryNotFound" };
     }
 
     const newArrivals = await repository.fetchNewArrivals(data);
@@ -308,62 +316,150 @@ const fetchAvailableProductTypes = async (product_id) => {
 const createCart = async (data) => {
   try {
     const user_id = Number(data?.user_id) || 0;
-    const product_id = Number(data?.product_id) || 0;
-    const variant_id = Number(data?.variant_id) || 0;
-    const quantity = Number(data?.quantity) || 0;
+    const isItemUpdate =
+      data.product_id !== undefined ||
+      data.variant_id !== undefined ||
+      data.quantity !== undefined;
 
-    const productExists = await repository.getProductById(product_id);
-    if (!productExists) {
-      return { success: false, key: "productNotFound" };
+    let activeCart = await repository.getActiveCartByUserId(user_id);
+    if (!activeCart) {
+      const cart_id = await repository.createCartHeader(user_id);
+      activeCart = await repository.getActiveCartByUserId(user_id);
+      if (!activeCart) activeCart = { cart_id, user_id };
     }
 
-    const variantExists = await repository.getVariantById(product_id, variant_id);
-    if (!variantExists) {
-      return { success: false, key: "variantNotFound" };
-    }
+    const recalculateCartHeaderAmounts = async () => {
+      const latestCart = await repository.getActiveCartByUserId(user_id);
+      if (!latestCart) return;
 
-    if (quantity > variantExists.qty) {
-      return { success: false, key: "insufficientStock" };
-    }
+      const cartItems = await repository.fetchCartItems({
+        user_id,
+        page: 1,
+        limit: 1000,
+      });
+      const subtotal = cartItems.reduce(
+        (sum, item) => sum + Number(item.total_price || 0),
+        0,
+      );
 
-    const price = Number(variantExists.price);
+      let taxAmount = 0;
+      if (latestCart.tax_id) {
+        const tax = await repository.fetchTax(latestCart.tax_id);
+        if (tax) {
+          if (tax.value_type === "percentage") {
+            taxAmount = (subtotal * Number(tax.tax_value)) / 100;
+          } else {
+            taxAmount = Number(tax.tax_value);
+          }
+        }
+      }
 
-    const cartItem = await repository.getCartItem(
-      user_id,
-      product_id,
-      variant_id
-    );
-    if (quantity === 0) {
-      if (cartItem.length) {
-        await repository.deleteCartItem(
-          cartItem[0].cart_item_id
+      const deliveryCharge = Number(latestCart.delivery_charge || 0);
+      let offerAmount = 0;
+      if (latestCart.voucher_id) {
+        const voucher = await repository.fetchVoucherById(
+          latestCart.voucher_id,
         );
+        if (voucher) {
+          const discountBase = subtotal + taxAmount + deliveryCharge;
+          if (voucher.discount_type === "percentage") {
+            offerAmount = (discountBase * Number(voucher.amount)) / 100;
+          } else {
+            offerAmount = Number(voucher.amount);
+          }
+        }
+      }
+
+      const totalPrice = Math.max(
+        0,
+        subtotal + taxAmount + deliveryCharge - offerAmount,
+      );
+
+      await repository.updateCartHeader(latestCart.cart_id, {
+        tax_amount: taxAmount,
+        offer_amount: offerAmount,
+        subtotal,
+        total_price: totalPrice,
+      });
+    };
+
+    if (isItemUpdate) {
+      const product_id = Number(data?.product_id) || 0;
+      const variant_id = Number(data?.variant_id) || 0;
+      const quantity = Number(data?.quantity);
+
+      const productExists = await repository.getProductById(product_id);
+      if (!productExists) {
+        return { success: false, key: "productNotFound" };
+      }
+
+      const variantExists = await repository.getVariantById(
+        product_id,
+        variant_id,
+      );
+      if (!variantExists) {
+        return { success: false, key: "variantNotFound" };
+      }
+
+      if (quantity > variantExists.qty) {
+        return { success: false, key: "insufficientStock" };
+      }
+
+      const price = Number(variantExists.price);
+      const cartItem = await repository.getCartItem(
+        user_id,
+        product_id,
+        variant_id,
+      );
+
+      if (quantity === 0) {
+        if (cartItem.length) {
+          await repository.deleteCartItem(cartItem[0].cart_item_id);
+          await recalculateCartHeaderAmounts();
+          return { success: true, key: "cartItemDeleted" };
+        }
+
+        return { success: false, key: "cartItemNotFound" };
+      }
+
+      if (cartItem.length) {
+        await repository.updateCartItem(
+          cartItem[0].cart_item_id,
+          quantity,
+          price,
+        );
+        await recalculateCartHeaderAmounts();
 
         return {
           success: true,
-          key: "cartItemDeleted",
+          key: "cartUpdated",
+          cart: {
+            user_id,
+            cart_item_id: cartItem[0].cart_item_id,
+            product_id,
+            variant_id,
+            quantity,
+            price,
+          },
         };
       }
 
-      return {
-        success: false,
-        key: "cartItemNotFound",
-      };
-    }
-
-    if (cartItem.length) {
-      await repository.updateCartItem(
-        cartItem[0].cart_item_id,
+      const insertId = await repository.insertCartItem(
+        user_id,
+        product_id,
+        variant_id,
         quantity,
-        price
+        price,
       );
+
+      await recalculateCartHeaderAmounts();
 
       return {
         success: true,
-        key: "cartUpdated",
+        key: "cartCreated",
         cart: {
           user_id,
-          cart_item_id: cartItem[0].cart_item_id,
+          cart_item_id: insertId,
           product_id,
           variant_id,
           quantity,
@@ -372,25 +468,101 @@ const createCart = async (data) => {
       };
     }
 
-    const insertId = await repository.insertCartItem(
+    const cartItems = await repository.fetchCartItems({
       user_id,
-      product_id,
-      variant_id,
-      quantity,
-      price
+      page: 1,
+      limit: 1000,
+    });
+    const subtotal = cartItems.reduce(
+      (sum, item) => sum + Number(item.total_price || 0),
+      0,
     );
 
+    const hasTaxId = data.tax_id !== undefined;
+    const hasVoucherId = data.voucher_id !== undefined;
+    const hasAddressId = data.address_id !== undefined;
+    const hasDeliveryCharge = data.delivery_charge !== undefined;
+
+    const nextTaxId = hasTaxId
+      ? data.tax_id === null
+        ? null
+        : Number(data.tax_id)
+      : activeCart.tax_id;
+
+    const nextVoucherId = hasVoucherId
+      ? data.voucher_id === null
+        ? null
+        : Number(data.voucher_id)
+      : activeCart.voucher_id;
+
+    const nextAddressId = hasAddressId
+      ? data.address_id === null
+        ? null
+        : Number(data.address_id)
+      : activeCart.address_id;
+
+    const deliveryChargeInput = hasDeliveryCharge
+      ? Number(data.delivery_charge || 0)
+      : Number(activeCart.delivery_charge || 0);
+
+    let tax = null;
+    let taxAmount = 0;
+    if (nextTaxId) {
+      tax = await repository.fetchTax(nextTaxId);
+      if (!tax) return { success: false, key: "taxNotFound" };
+      if (tax.value_type === "percentage") {
+        taxAmount = (subtotal * Number(tax.tax_value)) / 100;
+      } else {
+        taxAmount = Number(tax.tax_value);
+      }
+    }
+
+    let voucher = null;
+    let offerAmount = 0;
+    if (nextVoucherId) {
+      voucher = await repository.fetchVoucherById(nextVoucherId);
+      if (!voucher) return { success: false, key: "voucherNotFound" };
+
+      const discountBase = subtotal + taxAmount + deliveryChargeInput;
+      if (voucher.discount_type === "percentage") {
+        offerAmount = (discountBase * Number(voucher.amount)) / 100;
+      } else {
+        offerAmount = Number(voucher.amount);
+      }
+    }
+
+    if (nextAddressId) {
+      const address = await repository.fetchAddress({
+        address_id: nextAddressId,
+        user_id,
+      });
+      if (!address) return { success: false, key: "addressNotFound" };
+    }
+
+    const totalPrice = Math.max(
+      0,
+      subtotal + taxAmount + deliveryChargeInput - offerAmount,
+    );
+
+    const headerUpdate = {
+      tax_id: nextTaxId,
+      voucher_id: nextVoucherId,
+      address_id: nextAddressId,
+      tax_amount: taxAmount,
+      delivery_charge: deliveryChargeInput,
+      offer_amount: offerAmount,
+      subtotal,
+      total_price: totalPrice,
+      updated_at: new Date(),
+    };
+
+    await repository.updateCartHeader(activeCart.cart_id, headerUpdate);
+
+    const updatedCart = await repository.fetchCart({ user_id });
     return {
       success: true,
-      key: "cartCreated",
-      cart: {
-        user_id,
-        cart_item_id: insertId,
-        product_id,
-        variant_id,
-        quantity,
-        price,
-      },
+      key: "cartHeaderUpdated",
+      cart: updatedCart,
     };
   } catch (error) {
     console.log(error);
@@ -401,7 +573,14 @@ const createCart = async (data) => {
 // Create Address
 const createAddress = async (data) => {
   try {
-    const address = await repository.createAddress(data);
+    // Check if this is the first address
+    const addressCount = await repository.countUserAddresses(data.user_id);
+    const is_default = addressCount === 0 ? 1 : 0;
+
+    const address = await repository.createAddress({
+      ...data,
+      is_default,
+    });
 
     if (!address) return { success: false, key: "addressCreationFailed" };
     const addressData = await repository.fetchAddress({
@@ -482,19 +661,19 @@ const fetchCards = async (data) => {
 
 // Delete Card
 const deleteCard = async (data) => {
-      try {
-        const isCardExist = await repository.fetchCard(data);
-        if (!isCardExist) return { success: false, key: "cardNotFound" };
-    
-        const card = await repository.deleteCard(data);
-    
-        if (!card) return { success: false, key: "cardDeletionFailed" };
-    
-        return { success: true, key: "cardDeleted" };
-      } catch (error) {
-        console.log(error);
-        return { success: false, key: "somethingWentWrong" };
-      }
+  try {
+    const isCardExist = await repository.fetchCard(data);
+    if (!isCardExist) return { success: false, key: "cardNotFound" };
+
+    const card = await repository.deleteCard(data);
+
+    if (!card) return { success: false, key: "cardDeletionFailed" };
+
+    return { success: true, key: "cardDeleted" };
+  } catch (error) {
+    console.log(error);
+    return { success: false, key: "somethingWentWrong" };
+  }
 };
 
 // Update address
@@ -507,20 +686,27 @@ const updateAddress = async (data) => {
     });
     if (!is_addressExist) return { success: false, key: "addressNotFound" };
 
-    // const address = await repository.updateAddress(data);
-    // if (!address) return { success: false, key: "addressUpdateFailed" };
-    // const object = {}
+    const object = {};
 
-    if(data.name) object.name = data.name;
-    if(data.company) object.company = data.company;
-    if(data.address1) object.address1 = data.address1;
-    if(data.address2) object.address2 = data.address2;
-    if(data.city_id) object.city_id = data.city_id;
-    if(data.postal_code) object.postal_code = data.postal_code;
-    if(data.latitude) object.latitude = data.latitude;
-    if(data.longitude) object.longitude = data.longitude;
-    
-    const updatedAddress = await repository.updateAddress(object, data.address_id, data.user_id);
+    if (data.name) object.name = data.name;
+    if (data.company) object.company = data.company;
+    if (data.address1) object.address1 = data.address1;
+    if (data.address2) object.address2 = data.address2;
+    if (data.city_id) object.city_id = data.city_id;
+    if (data.postal_code) object.postal_code = data.postal_code;
+    if (data.latitude) object.latitude = data.latitude;
+    if (data.longitude) object.longitude = data.longitude;
+
+    // Handle setting as default address
+    if (data.is_default === 1) {
+      await repository.setDefaultAddress(data.address_id, data.user_id);
+    }
+
+    const updatedAddress = await repository.updateAddress(
+      object,
+      data.address_id,
+      data.user_id,
+    );
 
     return { success: true, key: "addressUpdated", address: updatedAddress };
   } catch (error) {
@@ -544,22 +730,20 @@ const deleteAddress = async (data) => {
     if (!address) return { success: false, key: "addressDeletionFailed" };
 
     return { success: true, key: "addressDeleted" };
-    
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
   }
 };
 
-
 // Fetch Cart
 const fetchCart = async (data) => {
   try {
     const cart = await repository.fetchCart(data);
 
-    if (!cart.length) return { success: false, key: "noCartFound" };
-    
-    return { success: true, key: "cartFound", cart };
+    if (!cart) return { success: false, key: "noCartFound" };
+
+    return { success: true, key: "cartFound", data: cart };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -569,8 +753,12 @@ const fetchCart = async (data) => {
 // Place Order from Cart
 const placeOrderFromCart = async (data) => {
   try {
+    const activeCart = await repository.getActiveCartByUserId(data.user_id);
+    if (!activeCart) return { success: false, key: "noCartFound" };
+
     // Fetch cart items
-    let cartItems = await repository.fetchCart(data);
+    let cartItems = await repository.fetchCartItems(data);
+    let subTotal = 0;
     let totalAmount = 0;
     let card;
     if (!cartItems.length) return { success: false, key: "noCartFound" };
@@ -594,13 +782,13 @@ const placeOrderFromCart = async (data) => {
         if (variant.qty < item.quantity) {
           return { success: false, key: "insufficientStock" };
         }
-
+        console.log(variant);
         item.color_name = variant.color_name;
         item.size_name = variant.size_name;
         item.sub_category_name = checkAvailability.sub_category_name;
         item.category_name = checkAvailability.category_name;
         item.title = checkAvailability.title;
-
+        subTotal += Number(variant.price) * Number(item.quantity);
         item.price = variant.price;
         item.total_price = Number(variant.price) * Number(item.quantity);
 
@@ -608,8 +796,15 @@ const placeOrderFromCart = async (data) => {
       }),
     );
 
-    // Calculate total amount
-    totalAmount = cartItems.reduce((sum, item) => sum + item.total_price, 0);
+    const failedItem = cartItems.find((item) => item.success === false);
+
+    if (failedItem) {
+      return {
+        success: false,
+        key: failedItem.key,
+      };
+    }
+
     // fetch address details
     const address = await repository.fetchAddress({
       address_id: data.address_id,
@@ -617,41 +812,55 @@ const placeOrderFromCart = async (data) => {
     });
     if (!address) return { success: false, key: "addressNotFound" };
 
+    // Starting calculations
+    totalAmount = subTotal;
+
     // fetch tax details if tax_id is provided
     let tax = null;
+    let totalTaxAmount = 0;
     if (data.tax_id) {
       tax = await repository.fetchTax(data.tax_id);
       if (!tax) return { success: false, key: "taxNotFound" };
       if (tax.value_type === "percentage") {
-        totalAmount += (totalAmount * Number(tax.tax_value)) / 100;
+        totalTaxAmount = (totalAmount * Number(tax.tax_value)) / 100;
+        totalAmount += totalTaxAmount;
       } else {
-        totalAmount += Number(tax.tax_value);
+        totalTaxAmount = Number(tax.tax_value);
+        totalAmount += totalTaxAmount;
       }
     }
 
-    // fetch discount details if discount_id is provided
-    let discount = null;
-    let discountAmount = 0;
+    // fetch voucher details if voucher_code is provided
+    let voucher = null;
+    let voucherAmount = 0;
+    if (data.voucher_code) {
+      voucher = await repository.fetchVoucherByCode(data.voucher_code);
+      if (!voucher) return { success: false, key: "voucherNotFound" };
 
-    if (data.discount_id) {
-      discount = await repository.fetchDiscount(data.discount_id);
-      if (!discount) return { success: false, key: "discountNotFound" };
-      
-      if (discount.amount_type === "percentage") {
-        if (discount.max_value) {
-          discountAmount = (totalAmount * Number(discount.amount)) / 100;
-          totalAmount -=
-          discountAmount > Number(discount.max_value)
-          ? Number(discount.max_value)
-          : discountAmount;
+      const voucherRedeem = await repository.fetchVoucherRedeem(
+        voucher.voucher_id,
+        data.user_id,
+      );
+      if (voucherRedeem) {
+        return { success: false, key: "voucherAlreadyRedeemed" };
+      }
+
+      if (voucher.discount_type === "percentage") {
+        voucherAmount = (totalAmount * Number(voucher.amount)) / 100;
+        if (voucher.max_value && voucherAmount > Number(voucher.max_value)) {
+          voucherAmount = Number(voucher.max_value);
+          totalAmount -= voucherAmount;
         } else {
-          totalAmount -= (totalAmount * Number(discount.amount)) / 100;
+          totalAmount -= voucherAmount;
         }
       } else {
-        totalAmount -= Number(discount.amount);
+        totalAmount -= Number(voucher.amount);
+      }
+
+      if (totalAmount < 0) {
+        totalAmount = 0;
       }
     }
-
 
     // if payment type is card then fetch card details
     if (data.payment_type !== "COD") {
@@ -659,10 +868,11 @@ const placeOrderFromCart = async (data) => {
         card_detail_id: data.card_detail_id,
         user_id: data.user_id,
       });
+      console.log("fetching card details", card);
       if (!card) return { success: false, key: "cardNotFound" };
     }
-
     // Place order from cart
+
     let order = await repository.insertOrder({
       user_id: data.user_id,
       name: address.name,
@@ -677,41 +887,59 @@ const placeOrderFromCart = async (data) => {
       longitude: address.longitude,
       tax_name: tax ? tax.tax_name : null,
       tax_value: tax ? tax.tax_value : null,
-      discount_name: discount ? discount.discount_name : null,
-      discount_type: discount ? discount.amount_type : null,
-      discount_value: discountAmount ? discountAmount : null,
+      discount_type: voucher ? voucher.amount_type : null,
+      discount_value: voucherAmount ? voucherAmount : null,
+      voucher_name: voucher ? voucher.voucher_name : null,
       payment_type: data.payment_type,
       card_name: card ? card.card_name : null,
       card_holder_name: card ? card.card_holder_name : null,
+      card_number: card ? card.card_number : null,
       card_type: card ? card.card_type : null,
-      total_price: totalAmount
+      total_final_tax: tax ? totalTaxAmount : null,
+      subtotal: subTotal,
+      total_price: totalAmount,
     });
+
     let order_id = order;
     // Map Items with order id
     const itemsWithOrderId = cartItems.map((item) => ({
-  ...item,
-  order_id,
-  }));
+      ...item,
+      order_id,
+      size: item.size_name,
+      color: item.color_name,
+    }));
 
     await repository.insertOrderItems(itemsWithOrderId);
 
-    if(order) await repository.insertOrderTracking(order_id);
+    if (voucher) {
+      await repository.insertVoucherRedeem({
+        voucher_id: voucher.voucher_id,
+        user_id: data.user_id,
+        order_id,
+        is_active: 1,
+        is_deleted: 0,
+      });
+    }
+
+    if (order) await repository.insertOrderTracking(order_id);
 
     const cartItemIds = cartItems.map((item) => item.cart_item_id);
 
-// Clear cart 
-await repository.clearCart({
-  user_id: data.user_id,
-  cartItemIds,
-});
+    // Clear cart
+    await repository.clearCart({
+      user_id: data.user_id,
+      cartItemIds,
+    });
+
+    await repository.markCartCheckedout(activeCart.cart_id);
 
     for (const item of cartItems) {
-  const updated = await repository.updateVariantStock(item);
+      const updated = await repository.updateVariantStock(item);
 
-  if (!updated) {
-    return { success: false, key: "insufficientStock" };
-  }
-}   
+      if (!updated) {
+        return { success: false, key: "insufficientStock" };
+      }
+    }
     await repository.placeNotification({
       user_id: data.user_id,
       message: `Your order with order id ${order_id} has been placed successfully.`,
@@ -719,8 +947,11 @@ await repository.clearCart({
     });
     if (!order) return { success: false, key: "orderPlacementFailed" };
 
-    order = repository.fetchOrderDetails({order_id: order_id, user_id: data.user_id})
-    return { success: true, key: "orderPlaced", order: order };
+    let orderDetails = await repository.fetchOrderDetails({
+      order_id: order_id,
+      user_id: data.user_id,
+    });
+    return { success: true, key: "orderPlaced", order: orderDetails };
   } catch (error) {
     console.log(error);
     return { success: false, key: "somethingWentWrong" };
@@ -806,7 +1037,6 @@ const fetchOrderTimeline = async (data) => {
 // Update profile
 const updateProfile = async (data) => {
   try {
-
     const profile = await repository.updateProfile(data);
     if (!profile) return { success: false, key: "profileUpdateFailed" };
 
@@ -842,9 +1072,8 @@ const fetchNotifications = async (data) => {
       return { success: false, key: "noNotificationsFound" };
 
     await repository.markNotificationsRead({
-      user_id: data.user_id
+      user_id: data.user_id,
     });
-
 
     return {
       success: true,
@@ -996,7 +1225,6 @@ const addRatingAndReview = async (data) => {
   try {
     const orderItem = await repository.fetchOrderItemForRating(data);
     if (!orderItem) return { success: false, key: "orderItemNotFound" };
-
 
     const rating = await repository.createProductRating({
       user_id: data.user_id,
